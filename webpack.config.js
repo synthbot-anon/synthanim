@@ -5,37 +5,36 @@ const path = require('path');
 const fs = require('fs');
 
 const entries = {};
-fs.readdirSync('./src/').forEach((filename) => {
+fs.readdirSync(`${__dirname}/src/`).forEach((filename) => {
   if (!filename.endsWith('.js')) {
     return;
   }
   const name = filename.replace(/\.[^/.]+$/, "");
-  const path = `./src/${filename}`;
+  const path = `${__dirname}/src/${filename}`;
   entries[name] = path;
 })
 
 module.exports = {
   entry: entries,
-  module: {
-    rules: [
-      {
-        test: /\.m?js$/,
-        exclude: /(node_modules|bower_components)/,
-        use: {
-          loader: 'babel-loader',
-          options: {
-            presets: ['@babel/preset-env']
-          }
-        }
-      }
-    ]
-  },
-  resolve: {
-    extensions: [ '.js' ],
-  },
-  target: ['es5'],
   output: {
     filename: 'PPP_[name].jsfl',
     path: commanddir
   },
+  module: {
+    rules: [
+      {
+        test: /\.tsx?|\.js$/,
+        use: 'ts-loader',
+        exclude: /node_modules/,
+      },
+    ],
+  },
+  resolve: {
+    extensions: [ '.tsx', '.ts', '.js' ],
+    modules: [
+      path.resolve('./src'),
+      path.resolve('./node_modules')
+    ]
+  },
+  target: ['es3']
 };
