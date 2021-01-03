@@ -1,9 +1,5 @@
 import logger from 'common/synthlogger.js';
 
-const ids = {
-	layerId: 0
-};
-
 export const getRootLayers = () => {
 	const timeline = fl.getDocumentDOM().getTimeline();
 	const file = new AnimationFile();
@@ -32,9 +28,8 @@ class AnimationSymbol {
 		this.file = file;
 		this.id = symbolId;
 		this.flElement = flElement;
+		this.flSymbol = flElement.libraryItem;
 		this.timeline = flElement.libraryItem.timeline;
-
-		this.knownFrames = [];
 		this.names = {};
 	}
 
@@ -172,6 +167,8 @@ class AnimationLayer {
 			}
 
 			const symbol = this.file.getSymbolFromElement(flElement);
+			symbol.attachName(this.name);
+
 			const symbolDisplayIndex = getSymbolDisplayIndex(flFrame, frameIndex, flElement);
 			const symbolFrame = new SymbolFrame(symbol, symbolDisplayIndex, flFrame);
 
@@ -221,4 +218,81 @@ const getSymbolDisplayIndex = (flFrame, frameIndex, flElement) => {
 
 	return symbolDisplayIndex;
 
+}
+
+class ArrayMaps {
+	constructor() {
+		this.knownMaps = {};
+	}
+
+	set(arrayId, arrayIndex, value) {
+		let knownMap = this.knownMaps[arrayId];
+		if (!knownMap) {
+			knownMap = [];
+			this.knownMaps[arrayId] = knownMap;
+		}
+
+		knownMap[arrayIndex] = value;
+	}
+
+	get(arrayId, arrayIndex) {
+		const arrayResult = this.knownMaps[arrayId];
+		if (arrayIndex !== undefined) {
+			return arrayResult[arrayIndex];
+		}
+
+		return arrayResult;
+	}
+
+	compactKeys() {
+		const result = [];
+		
+	}
+}
+
+export class SymbolExporter {
+	constructor(folderPath) {
+		this.rootPath = folderPath;
+		this.sequences = [];
+		this.framesBySymbolId = new ArrayMaps();
+		this.symbolsById = {};
+	}
+
+	addSequences(sequences) {
+		sequences.forEach((seq) => {
+			seq.frames.map((sequenceFrame) => {
+				for (let componentFrame of sequenceFrame.allSymbolFrames()) {
+					this.symbolsById[componentFrame.symbol.id] = componentFrame.symbol;
+					this.framesBySymbolId.set(
+						componentFrame.symbol.id, componentFrame.frameIndex, true
+					);
+				}
+			});
+		});
+	}
+
+	getSymbolsByName(name) {
+		const result = [];
+
+		for (let id in this.symbolsById) {
+			const symbol = this.symbolsById[id];
+			if (name in symbol.names) {
+				result.push(symbol);
+			}
+		}
+
+		return result;
+	}
+
+	dumpSymbolSpritesheet(symbol) {
+		const knownFrames = this.framesBySymbolId.get(symbol.id);
+		logger.trace(knownFrames.length, Object.keys(knownFrames));
+		logger.trace(symbol.id);
+
+		const exporter = new SpriteSheetExporter();
+		const spritePath = `file:///${this.rootPath}/${symbol.id}.png`;
+		logger.trace("path:", spritePath);
+		exporter.addSymbol(symbol.flSymbol);
+		exporter.exportSpriteSheet(spritePath, { format: "png", bitDepth: 32, backgroundColor: "#00000000" });
+	}
 }

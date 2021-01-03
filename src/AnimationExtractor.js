@@ -1,6 +1,6 @@
 import 'common/polyfill.js';
 import logger from 'common/synthlogger.js'
-import { getRootLayers } from 'common/AnimationTree.js';
+import { getRootLayers, SymbolExporter } from 'common/AnimationTree.js';
 
 const greet = (name) => {
 	logger.trace("hello", name);
@@ -22,20 +22,16 @@ const appendDescendants = (layer) => {
 
 const rootLayers = getRootLayers();
 const scene = rootLayers.filter((x) => x.name === "SCENE")[0];
-const rootSequences = rootLayers.map((x) => x.getSequences());
+const exporter = new SymbolExporter("C:/Users/synthbot/animation_dump");
 
-rootLayers.forEach((layer) => {
-	const sequences = layer.getSequences();
-
-	sequences.forEach((sequence) => {
-		// logger.trace("symbol:", sequence.symbol.id, sequence.symbol.flElement.guid, sequence.symbol.getNames());
-		logger.trace(layer.name, "frames:", ...sequence.frames.map((x) => {
-			const symbolFrames = x.allSymbolFrames();
-			return [symbolFrames.length, x.hasInvalidFrames];
-		}));
-	});
+const rootSequences = rootLayers.map((x) => {
+	exporter.addSequences(x.getSequences());
 });
 
+const twilightSymbol = exporter.getSymbolsByName("TS")[0];
+exporter.dumpSymbolSpritesheet(twilightSymbol);
+
+logger.trace("done");
 
 // allLayers.forEach((x) => {
 // 	logger.trace(x.name, x.startFrame, x.duration);
