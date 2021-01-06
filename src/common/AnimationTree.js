@@ -84,6 +84,7 @@ class AnimationSequence {
 	pushFrame(frame) {
 		this.frames.push(frame);
 	}
+
 }
 
 class SequenceGenerator {
@@ -235,6 +236,11 @@ class ArrayMaps {
 		knownMap[arrayIndex] = value;
 	}
 
+	push(arrayId, value) {
+		const offset = (this.get(arrayId) || []).length
+		this.set(arrayId, offset, value);
+	}
+
 	get(arrayId, arrayIndex) {
 		const arrayResult = this.knownMaps[arrayId];
 		if (arrayIndex !== undefined) {
@@ -246,7 +252,7 @@ class ArrayMaps {
 
 	compactKeys() {
 		const result = [];
-		
+
 	}
 }
 
@@ -284,15 +290,27 @@ export class SymbolExporter {
 		return result;
 	}
 
-	dumpSymbolSpritesheet(symbol) {
-		const knownFrames = this.framesBySymbolId.get(symbol.id);
-		logger.trace(knownFrames.length, Object.keys(knownFrames));
-		logger.trace(symbol.id);
+	getMedianFrame(symbol) {
+		const frames = Object.keys(this.framesBySymbolId.get(symbol.id));
+		frames.sort();
 
+		const offset = Math.floor(frames.length / 2);
+		return parseInt(frames[offset]);
+	}
+
+	dumpSymbolSpritesheet(symbol) {
+		const frameIndex = this.getMedianFrame(symbol);
 		const exporter = new SpriteSheetExporter();
 		const spritePath = `file:///${this.rootPath}/${symbol.id}.png`;
-		logger.trace("path:", spritePath);
-		exporter.addSymbol(symbol.flSymbol);
-		exporter.exportSpriteSheet(spritePath, { format: "png", bitDepth: 32, backgroundColor: "#00000000" });
+		symbol.flSymbol.exportToPNGSequence(spritePath, frameIndex+1, frameIndex+1);
+
+		const framePath = getFrameFilename(spritePath, frameIndex+2);
+		FLfile.remove(framePath);
 	}
+}
+
+const getFrameFilename = (uri, frameIndex) => {
+	const parts = uri.split(".");
+	const extension = parts.pop();
+	return `${parts.join(".")}${frameIndex.toString().padStart(4, 0)}.${extension}`;
 }
