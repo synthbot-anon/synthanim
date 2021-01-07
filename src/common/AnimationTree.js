@@ -3,23 +3,26 @@ import logger from 'common/synthlogger.js';
 export const getRootLayers = () => {
 	const timeline = fl.getDocumentDOM().getTimeline();
 	const file = new AnimationFile();
-	return timeline.layers.map((x) => new AnimationLayer(file, x));
+	return timeline.layers.map((x, i) => {
+		const layerId = `L${i}`;
+		return new AnimationLayer(file, layerId, x);
+	});
 };
 
 class AnimationFile {
 	constructor() {
 		this.knownSymbols = {};
+		this.symbolIdFromGuid = {};
+		this.knownLayers = {};
 	}
 
-	getSymbolFromElement(flElement) {
-		const symbolId = flElement.guid;
-		if (symbolId in this.knownSymbols) {
-			return this.knownSymbols[symbolId];
+	getSymbolId(proposal, guid) {
+		if (guid in this.symbolIdFromGuid) {
+			return this.symbolIdFromGuid[guid];
 		}
 
-		const result = new AnimationSymbol(this, symbolId, flElement);
-		this.knownSymbols[symbolId] = result;
-		return result;
+		this.symbolIdFromGuid[guid] = proposal;
+		return proposal;
 	}
 }
 
@@ -41,8 +44,19 @@ class AnimationSymbol {
 		return Object.keys(this.names).join(",");
 	}
 
+	getLayerFromFLlayer(layerIndex, flLayer) {
+		const layerId = `${this.id}_L${layerIndex}`;
+		if (layerId in this.file.knownLayers) {
+			return this.file.knownLayers[layerId];
+		}
+
+		const result = new AnimationLayer(this.file, layerId, flLayer);
+		this.file.knownLayers[layerId] = result;
+		return result;
+	}
+
 	getLayers() {
-		return this.timeline.layers.map((x) => new AnimationLayer(this.file, x));
+		return this.timeline.layers.map((x, i) => this.getLayerFromFLlayer(i, x));
 	}
 }
 
@@ -130,10 +144,24 @@ class SequenceGenerator {
 }
 
 class AnimationLayer {
-	constructor(file, flLayer) {
+	constructor(file, layerId, flLayer) {
 		this.file = file;
+		this.id = layerId;
 		this.flLayer = flLayer;
 		this.name = flLayer.name;
+	}
+
+	getSymbolFromFLelement(frameIndex, elementIndex, flElement) {
+		const symbolIdProposal = `${this.id}F${frameIndex}E${elementIndex}`;
+		const symbolId = this.file.getSymbolId(symbolIdProposal, flElement.guid);
+
+		if (symbolId in this.file.knownSymbols) {
+			return this.file.knownSymbols[symbolId];
+		}
+
+		const result = new AnimationSymbol(this.file, symbolId, flElement);
+		this.file.knownSymbols[symbolId] = result;
+		return result;
 	}
 
 	getSequences() {
@@ -160,21 +188,20 @@ class AnimationLayer {
 			return null;
 		}
 
-		// logger.trace("getting frames:", frameIndex, "of", this.flLayer.frames.length, "for", this.name);
-		
-		for (let flElement of flFrame.elements) {
+		flFrame.elements.forEach((flElement, elementIndex) => {
 			if (!elementHasFrames(flElement)) {
-				continue;
+				return;
 			}
 
-			const symbol = this.file.getSymbolFromElement(flElement);
+			const symbol = this.getSymbolFromFLelement(frameIndex, elementIndex, flElement);
 			symbol.attachName(this.name);
 
 			const symbolDisplayIndex = getSymbolDisplayIndex(flFrame, frameIndex, flElement);
 			const symbolFrame = new SymbolFrame(symbol, symbolDisplayIndex, flFrame);
 
 			result.push(symbolFrame);
-		}
+		});
+			
 
 		return result;
 	}
@@ -290,6 +317,17 @@ export class SymbolExporter {
 		return result;
 	}
 
+	getAllSymbolNames() {
+		const result = [];
+
+		for (let id in this.symbolsById) {
+			const symbol = this.symbolsById[id];
+			result.push(...Object.keys(symbol.names));
+		}
+
+		return result;
+	}
+
 	getMedianFrame(symbol) {
 		const frames = Object.keys(this.framesBySymbolId.get(symbol.id));
 		frames.sort();
@@ -301,7 +339,8 @@ export class SymbolExporter {
 	dumpSymbolSpritesheet(symbol) {
 		const frameIndex = this.getMedianFrame(symbol);
 		const exporter = new SpriteSheetExporter();
-		const spritePath = `file:///${this.rootPath}/${symbol.id}.png`;
+		const spritePath = `file:///${this.rootPath}/${symbol.id}_f.png`;
+		logger.trace('dumping', frameIndex);
 		symbol.flSymbol.exportToPNGSequence(spritePath, frameIndex+1, frameIndex+1);
 
 		const framePath = getFrameFilename(spritePath, frameIndex+2);

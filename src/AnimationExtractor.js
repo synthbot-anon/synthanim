@@ -28,7 +28,9 @@ const rootSequences = rootLayers.map((x) => {
 	exporter.addSequences(x.getSequences());
 });
 
-const twilightSymbol = exporter.getSymbolsByName("TS")[0];
+logger.trace(exporter.getAllSymbolNames().join("\n"));
+
+const twilightSymbol = exporter.getSymbolsByName("EAR")[0];
 exporter.dumpSymbolSpritesheet(twilightSymbol);
 
 logger.trace("done");
