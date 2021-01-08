@@ -6,7 +6,7 @@ const greet = (name) => {
 	logger.trace("hello", name);
 };
 
-logger.tee("~/log.txt");
+logger.tee("C:/Users/synthbot/log.txt");
 greet("blackcat"); 
 
 const allLayers = getRootLayers();

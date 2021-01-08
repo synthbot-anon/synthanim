@@ -10,6 +10,7 @@ class SynthLogger {
 		fl.trace(output);
 		if (this.optionalFile) {
 			FLfile.write(this.optionalFile, output, "append");
+			FLfile.write(this.optionalFile, "\n", "append");
 		}
 	}
 
