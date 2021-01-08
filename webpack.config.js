@@ -1,5 +1,5 @@
-const commanddir = 'C:/Users/synthbot/AppData/Local/Adobe/Animate 2020/en_US/Configuration/Commands/'
-// const commanddir = `${__dirname}/dist`;
+const commandsDir = 'C:/Users/synthbot/AppData/Local/Adobe/Animate 2020/en_US/Configuration/Commands/'
+// const commandsDir = `${__dirname}/dist`;
 
 const path = require('path');
 const fs = require('fs');
@@ -18,7 +18,7 @@ module.exports = {
   entry: entries,
   output: {
     filename: 'PPP_[name].jsfl',
-    path: commanddir
+    path: commandsDir
   },
   module: {
     rules: [
