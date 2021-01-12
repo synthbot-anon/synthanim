@@ -9,6 +9,18 @@ export const getRootLayers = () => {
 	});
 };
 
+const to_valid_filename = (proposal) => {
+	return (proposal.replaceAll('_', '__')
+			.replaceAll('\\*', '_s')
+			.replaceAll('\\/', '_f')
+			.replaceAll('\\\\', '_b')
+			.replaceAll(':', '_c')
+			.replaceAll('"', '_q')
+			.replaceAll('<', '_l')
+			.replaceAll('>', '_r')
+			.replaceAll('\\|', '_p'));
+}
+
 class AnimationFile {
 	constructor() {
 		this.knownSymbols = {};
@@ -152,7 +164,7 @@ class AnimationLayer {
 	}
 
 	getSymbolFromFLelement(frameIndex, elementIndex, flElement) {
-		const symbolIdProposal = `${this.id}F${frameIndex}E${elementIndex}`;
+		const symbolIdProposal = flElement.libraryItem.name;
 		const symbolId = this.file.getSymbolId(symbolIdProposal, flElement.guid);
 
 		if (symbolId in this.file.knownSymbols) {
@@ -336,15 +348,24 @@ export class SymbolExporter {
 		return parseInt(frames[offset]);
 	}
 
-	dumpSymbolSpritesheet(symbol) {
+	dumpSymbolSample(symbol) {
 		const frameIndex = this.getMedianFrame(symbol);
 		const exporter = new SpriteSheetExporter();
-		const spritePath = `file:///${this.rootPath}/${symbol.id}_f.png`;
-		logger.trace('dumping', frameIndex);
+		const spriteFilename = to_valid_filename(symbol.id);
+		const spritePath = `file:///${this.rootPath}/${spriteFilename}_f.png`;
+		logger.trace('dumping to', spritePath);
 		symbol.flSymbol.exportToPNGSequence(spritePath, frameIndex+1, frameIndex+1);
 
 		const framePath = getFrameFilename(spritePath, frameIndex+2);
 		FLfile.remove(framePath);
+	}
+
+	dumpAllSymbolSamples() {
+		// logger.trace(Object.keys(this.symbolsById).length);
+		for (let symbolId in this.symbolsById) {
+			const symbol = this.symbolsById[symbolId];
+			this.dumpSymbolSample(symbol);
+		}
 	}
 }
 
