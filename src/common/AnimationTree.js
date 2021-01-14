@@ -9,16 +9,18 @@ export const getRootLayers = () => {
 	});
 };
 
-const to_valid_filename = (proposal) => {
+const toValidFilename = (proposal) => {
 	return (proposal.replaceAll('_', '__')
 			.replaceAll('\\*', '_s')
 			.replaceAll('\\/', '_f')
 			.replaceAll('\\\\', '_b')
+			.replaceAll('~', '_t')
 			.replaceAll(':', '_c')
 			.replaceAll('"', '_q')
 			.replaceAll('<', '_l')
 			.replaceAll('>', '_r')
-			.replaceAll('\\|', '_p'));
+			.replaceAll('\\|', '_p')
+			.replaceAll('\\?', '_m'));
 }
 
 class AnimationFile {
@@ -196,7 +198,7 @@ class AnimationLayer {
 		const flFrame = this.flLayer.frames[frameIndex];
 
 		if (!flFrame) {
-			logger.trace("invalid frame index", frameIndex, "for layer", this.name);
+			// logger.trace("invalid frame index", frameIndex, "for layer", this.name);
 			return null;
 		}
 
@@ -296,8 +298,7 @@ class ArrayMaps {
 }
 
 export class SymbolExporter {
-	constructor(folderPath) {
-		this.rootPath = folderPath;
+	constructor() {
 		this.sequences = [];
 		this.framesBySymbolId = new ArrayMaps();
 		this.symbolsById = {};
@@ -348,23 +349,22 @@ export class SymbolExporter {
 		return parseInt(frames[offset]);
 	}
 
-	dumpSymbolSample(symbol) {
+	dumpSymbolSample(symbol, folder) {
 		const frameIndex = this.getMedianFrame(symbol);
 		const exporter = new SpriteSheetExporter();
-		const spriteFilename = to_valid_filename(symbol.id);
-		const spritePath = `file:///${this.rootPath}/${spriteFilename}_f.png`;
-		logger.trace('dumping to', spritePath);
+		const spriteFilename = toValidFilename(symbol.id);
+		const spritePath = `file:///${folder}/${spriteFilename}_f.png`;
 		symbol.flSymbol.exportToPNGSequence(spritePath, frameIndex+1, frameIndex+1);
 
 		const framePath = getFrameFilename(spritePath, frameIndex+2);
 		FLfile.remove(framePath);
 	}
 
-	dumpAllSymbolSamples() {
-		// logger.trace(Object.keys(this.symbolsById).length);
+	dumpAllSymbolSamples(folder) {
+		FLfile.createFolder(`file:///${folder}`);
 		for (let symbolId in this.symbolsById) {
 			const symbol = this.symbolsById[symbolId];
-			this.dumpSymbolSample(symbol);
+			this.dumpSymbolSample(symbol, folder);
 		}
 	}
 }

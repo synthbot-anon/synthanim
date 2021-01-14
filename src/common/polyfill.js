@@ -543,3 +543,25 @@ if (!String.prototype.replaceAll) {
 
   };
 }
+
+if (!String.prototype.toLowerCase) {
+  String.prototype.toLowerCase = function() {
+    // TODO: Support Unicode characters.
+    if (this === null || this === undefined) {
+      throw TypeError('"this" is null or undefined');
+    }
+    var str = '' + this;
+    var lower = 'abcdefghijklmnopqrstuvwxyz';
+    var upper = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+    var outStr = '';
+    for (var i = 0; i < str.length; i++) {
+      var x = upper.indexOf(str[i]);
+      if (x == -1) {
+        outStr += str[i];
+      } else {
+        outStr += lower[x];
+      }
+    }
+    return outStr;
+  }
+}

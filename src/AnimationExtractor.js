@@ -5,33 +5,62 @@ import { getRootLayers, SymbolExporter } from 'common/AnimationTree.js';
 logger.trace("--- ---");
 fl.showIdleMessage(false);
 
-// const allLayers = getRootLayers();
-// const appendDescendants = (layer) => {
-// 	layer.getChildren().forEach((x) => {
-// 		allLayers.push(x);
-// 		logger.trace(x.name, x.startFrame, x.duration);
-// 		appendDescendants(x);
-// 	});
-// }
+const clipperDir = "C:/Users/synthbot/Desktop/Sorted Animation Assets/1 - FLA/6 - Scenes";
+const outputDir = "C:/Users/synthbot/animation_dump/6 - Scenes";
 
-// getRootLayers().forEach((x) => appendDescendants(x));
+const g = {
+	// to resume processing, skip all files by filename before this one
+	fastforwardUntil: "MLP214_043.fla",
+};
 
-const rootLayers = getRootLayers();
-const exporter = new SymbolExporter("C:/Users/synthbot/animation_dump");
+const convertCurrentDocument = (destFile) => {
+	const rootLayers = getRootLayers();
+	const exporter = new SymbolExporter();
 
-rootLayers.map((rootLayer) => {
-	exporter.addSequences(rootLayer.getSequences());
-});
+	rootLayers.map((rootLayer) => {
+		exporter.addSequences(rootLayer.getSequences());
+	});
 
-exporter.dumpAllSymbolSamples();
+	exporter.dumpAllSymbolSamples(destFile);
+}
 
-// const rootSequences = rootLayers.map((x) => {
-// 	exporter.addSequences(x.getSequences());
-// });
+const convertDirectory = (sourceDir, destinationDir) => {
+	const availableFiles = FLfile.listFolder(`file:///${sourceDir}`, "files");
+	FLfile.createFolder(destinationDir);
 
-// logger.trace(exporter.getAllSymbolNames().join("\n"));
+	for (let filename of availableFiles) {
+		if (g.fastforwardUntil) {
+			if (filename != g.fastforwardUntil) {
+				continue;
+			}
+			
+			g.fastforwardUntil = false;
+		}
 
-// const twilightSymbol = exporter.getSymbolsByName("EAR")[0];
-// exporter.dumpSymbolSpritesheet(twilightSymbol);
+		const filenameLower = filename.toLowerCase();
+		if (!filename.endsWith(".fla")) {
+			continue;
+		}
+
+		const sourceFile = `${sourceDir}/${filename}`;
+		const destinationFile = `${destinationDir}/${filename}`;
+
+		logger.trace("creating", destinationFile);
+
+		fl.openDocument(`file:///${sourceFile}`);
+		convertCurrentDocument(destinationFile);
+		fl.closeAll(false);
+	}
+
+	const availableDirectories = FLfile.listFolder(`file:///${sourceDir}`, "directories");
+	for (let dirname of availableDirectories) {
+		const newSourceDir = `${sourceDir}/${dirname}`;
+		const newdestinationDir = `${destinationDir}/${dirname}`;
+		convertDirectory(newSourceDir, newdestinationDir);
+	}
+}
+
+fl.closeAll(true);
+convertDirectory(clipperDir, outputDir);
 
 logger.trace("done");
