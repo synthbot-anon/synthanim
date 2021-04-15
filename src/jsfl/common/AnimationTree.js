@@ -1,5 +1,3 @@
-import logger from 'common/synthlogger.js';
-
 export const getRootLayers = () => {
 	const timeline = fl.getDocumentDOM().getTimeline();
 	const file = new AnimationFile();
@@ -21,6 +19,20 @@ const toValidFilename = (proposal) => {
 			.replaceAll('>', '_r')
 			.replaceAll('\\|', '_p')
 			.replaceAll('\\?', '_m'));
+}
+
+const fromValidFilename = (filename) => {
+	return (filename.replaceAll('_m', '?')
+		.replaceAll('_p', '|')
+		.replaceAll('_r', '>')
+		.replaceAll('_l', '<')
+		.replaceAll('_q', '"')
+		.replaceAll('_c', ':')
+		.replaceAll('_t', '~')
+		.replaceAll('_b', '\\')
+		.replaceAll('_f', '/')
+		.replaceAll('_s', '*')
+		.replaceAll('__', '_'));
 }
 
 class AnimationFile {
@@ -48,6 +60,7 @@ class AnimationSymbol {
 		this.flSymbol = flElement.libraryItem;
 		this.timeline = flElement.libraryItem.timeline;
 		this.names = {};
+		this.frames = [];
 	}
 
 	attachName(name) {
@@ -71,6 +84,10 @@ class AnimationSymbol {
 
 	getLayers() {
 		return this.timeline.layers.map((x, i) => this.getLayerFromFLlayer(i, x));
+	}
+
+	registerFrame(symbolFrame) {
+		this.frames[symbolFrame.frameIndex] = symbolFrame;
 	}
 }
 
@@ -212,6 +229,7 @@ class AnimationLayer {
 
 			const symbolDisplayIndex = getSymbolDisplayIndex(flFrame, frameIndex, flElement);
 			const symbolFrame = new SymbolFrame(symbol, symbolDisplayIndex, flFrame);
+			symbol.registerFrame(symbolFrame);
 
 			result.push(symbolFrame);
 		});
@@ -291,9 +309,27 @@ class ArrayMaps {
 		return arrayResult;
 	}
 
-	compactKeys() {
+	getCompact(arrayId) {
 		const result = [];
+		const keys = Object.keys(this.knownMaps[arrayId]);
 
+		if (keys.length === 0) {
+			return result;
+		}
+
+		let nextBatch = null;
+		for (let nextKey of keys) {
+			if (nextBatch && (nextKey-1 === nextBatch[nextBatch.length-1])) {
+				nextBatch.push(nextKey)
+			} else {
+				if (nextBatch) {
+					result.push(nextBatch);
+				}
+				nextBatch = [nextKey];
+			}
+		}
+
+		return result;
 	}
 }
 
@@ -302,18 +338,28 @@ export class SymbolExporter {
 		this.sequences = [];
 		this.framesBySymbolId = new ArrayMaps();
 		this.symbolsById = {};
+		this.sequencesBySymbolId = {};
 	}
 
 	addSequences(sequences) {
+		const generator = new SequenceGenerator();
+
 		sequences.forEach((seq) => {
 			seq.frames.map((sequenceFrame) => {
 				for (let componentFrame of sequenceFrame.allSymbolFrames()) {
+					generator.placeSymbolFrame(componentFrame);
 					this.symbolsById[componentFrame.symbol.id] = componentFrame.symbol;
 					this.framesBySymbolId.set(
 						componentFrame.symbol.id, componentFrame.frameIndex, true
 					);
 				}
 			});
+		});
+
+		generator.getSequences().forEach((seq) => {
+			const knownSequences = this.sequencesBySymbolId[seq.symbol.id] || [];
+			knownSequences.push(seq.frames);
+			this.sequencesBySymbolId[seq.symbol.id] = knownSequences;
 		});
 	}
 
@@ -354,7 +400,12 @@ export class SymbolExporter {
 		const exporter = new SpriteSheetExporter();
 		const spriteFilename = toValidFilename(symbol.id);
 		const spritePath = `file:///${folder}/${spriteFilename}_f.png`;
-		symbol.flSymbol.exportToPNGSequence(spritePath, frameIndex+1, frameIndex+1);
+
+		try {
+			symbol.flSymbol.exportToPNGSequence(spritePath, frameIndex+1, frameIndex+1);
+		} catch(err) {
+			logger.trace("failed to convert", spritePath, "!");
+		}
 
 		const framePath = getFrameFilename(spritePath, frameIndex+2);
 		FLfile.remove(framePath);
@@ -365,6 +416,41 @@ export class SymbolExporter {
 		for (let symbolId in this.symbolsById) {
 			const symbol = this.symbolsById[symbolId];
 			this.dumpSymbolSample(symbol, folder);
+		}
+	}
+
+	dumpTextureAtlas(fileSafeSymbolId, folder) {
+		const symbolId = fromValidFilename(fileSafeSymbolId);
+		logger.trace("symbol:", symbolId);
+		const rootSymbol = this.symbolsById[symbolId];
+
+		const exporter = new TextureAtlasExporter();
+		exporter.filePath = folder;
+		exporter.autoSize = true;
+		exporter.resolution = 1;
+		exporter.optimizeJson = true;
+		exporter.imageFormat = "RGB8";
+		exporter.optimizeBitmap = true;
+
+		exporter.exportTextureAtlas(rootSymbol.flSymbol);
+	}
+
+	dumpFramesForSymbol(fileSafeSymbolId, filepath) {
+		const symbolId = fromValidFilename(fileSafeSymbolId);
+		const result = [];
+		this.sequencesBySymbolId[symbolId].forEach((seq) => {
+			result.push(seq.map((x) => x.frameIndex));
+		});
+		logger.trace(JSON.stringify(result));
+	}
+
+	dumpAllSequences(folder) {
+		FLfile.createFolder(`file:///${folder}`);
+
+		for (let symbolId in this.symbolsById) {
+			const symbol = this.symbolsById[symbolId];
+			const frameSets = this.framesBySymbolId.getCompact(symbolId);
+			this.dumpSymbolSequences(symbol, frames, folder);
 		}
 	}
 }

@@ -1,7 +1,8 @@
 import 'common/polyfill.js';
-import logger from 'common/synthlogger.js'
+import synthrunner from 'common/synthrunner.js'
 import { getRootLayers, SymbolExporter } from 'common/AnimationTree.js';
 
+logger.tee("C:/Users/synthbot/Desktop/animate_logs.txt");
 logger.trace("--- ---");
 fl.showIdleMessage(false);
 
@@ -10,10 +11,11 @@ const outputDir = "C:/Users/synthbot/animation_dump/6 - Scenes";
 
 const g = {
 	// to resume processing, skip all files by filename before this one
-	fastforwardUntil: "MLP214_043.fla",
+	fastforwardUntil: "MLP922_067B_2019-01-21_09-41-16.fla",
 };
 
-const convertCurrentDocument = (destFile) => {
+const convertDocument = (sourceFile, destFile) => {
+	document = fl.openDocument(`file:///${sourceFile}`);
 	const rootLayers = getRootLayers();
 	const exporter = new SymbolExporter();
 
@@ -22,6 +24,7 @@ const convertCurrentDocument = (destFile) => {
 	});
 
 	exporter.dumpAllSymbolSamples(destFile);
+	fl.closeDocument(document, false);
 }
 
 const convertDirectory = (sourceDir, destinationDir) => {
@@ -45,11 +48,14 @@ const convertDirectory = (sourceDir, destinationDir) => {
 		const sourceFile = `${sourceDir}/${filename}`;
 		const destinationFile = `${destinationDir}/${filename}`;
 
-		logger.trace("creating", destinationFile);
-
-		fl.openDocument(`file:///${sourceFile}`);
-		convertCurrentDocument(destinationFile);
-		fl.closeAll(false);
+		try {
+			logger.trace("creating", destinationFile);
+			convertDocument(sourceFile, destinationFile);
+		} catch(err) {
+			logger.trace("failed to convert", sourceFile);
+		}
+		
+		
 	}
 
 	const availableDirectories = FLfile.listFolder(`file:///${sourceDir}`, "directories");
