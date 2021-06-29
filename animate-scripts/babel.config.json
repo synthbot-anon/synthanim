@@ -1,0 +1,14 @@
+{
+  "presets": [
+    ["@babel/preset-env", {
+      "loose": true,
+    }]
+  ],
+  "plugins": [
+    ["babel-plugin-root-import", {
+      "rootPathPrefix": "~",
+      "rootPathSuffix": "src/jsfl"
+    }]
+
+  ]  
+}
