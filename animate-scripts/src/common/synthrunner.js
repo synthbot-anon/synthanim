@@ -1,5 +1,6 @@
 import 'common/polyfill.js';
 
+
 class SynthLogger {
 
 	constructor(ipcFilename) {
@@ -8,7 +9,7 @@ class SynthLogger {
 	}
 
 	begin() {
-		this.logJson({ "status": "started" })
+		this.logJson({ "control": "started" })
 
 	}
 
@@ -17,7 +18,7 @@ class SynthLogger {
 			return;
 		}
 
-		this.logJson({ "status": "completed" });
+		this.logJson({ "control": "completed" });
 		FLfile.write(this.ipcFilename + ".completed", "");
 		this.completed = true;
 	}
@@ -26,17 +27,18 @@ class SynthLogger {
 		this.logJson({ "error": err })
 	}
 
-	status(object) {
-		this.logJson({ "status": object });
+	log(...args) {
+		let message = args[0]
+		if (typeof(args[0]) === "string") {
+			message = args.join(" ");
+		}
+
+		this.logJson({ "log": message });
 	}
 
-	log(...message) {
-		const output = message.join(' ');
-
-		fl.trace(output);
-		fl.trace(this.ipcFilename);
-		FLfile.write(this.ipcFilename, output, "append");
-		FLfile.write(this.ipcFilename, "\n", "append");
+	_log(message) {
+		fl.trace(message);
+		FLfile.write(this.ipcFilename, `${message}\n`, "append");
 	}
 
 	logProperties(object) {
@@ -48,13 +50,16 @@ class SynthLogger {
 	}
 
 	logJson(object) {
-		this.log(JSON.stringify(object));
+		this._log(JSON.stringify(object));
 	}
 
 }
 
+export const logger = new SynthLogger("%ipc");
+
 export default synthrunner = (fn) => {
-	let logger = new SynthLogger("%ipc");
+	// fl.showIdleMessage(false);
+	fl.suppressAlerts = true;
 
 	try {
 		logger.begin();
