@@ -15,18 +15,21 @@ from .config import SynthConfigParser, ConfigArgAction
 from synthrunner import files
 from .i_hate_windows import make_windows_usable
 
+def print_deque(x):
+    for item in x:
+        print(item)
 
 def dump_xfl(args):
     animate = files.select_animate(args)
     input_files = files.select_source(args, [("FLA file", "*.fla")])
     output_path = files.select_destination(args)
 
-    collections.deque(animate.open_animate())
+    print_deque(animate.open_animate())
 
     for inp in input_files:
         basename = os.path.splitext(os.path.basename(inp))[0]
         outp = f"{os.path.join(output_path, basename)}.xfl"
-        collections.deque(animate.dump_xfl(sourceFile=inp, outputFile=outp))
+        print_deque(animate.dump_xfl(sourceFile=inp, outputFile=outp))
 
 
 def dump_texture_atlas(args):
@@ -43,7 +46,7 @@ def dump_texture_atlas(args):
         destination = buckets.setdefault(symbolFile.fla_name, [])
         destination.append(symbolFile)
 
-    collections.deque(animate.open_animate())
+    print_deque(animate.open_animate())
 
     for fla_name in buckets:
         source_file = assets.get_path(f"{fla_name}.fla")
@@ -62,7 +65,7 @@ def dump_texture_atlas(args):
 
         command = {"sourceFile": source_file, "samples": samples}
 
-        collections.deque(animate.dump_texture_atlas(command))
+        print_deque(animate.dump_texture_atlas(command))
 
 
 def dump_samples(args):
@@ -70,17 +73,24 @@ def dump_samples(args):
     input_files = files.select_source(args, [("Animation file", "*.fla *.xfl")])
     output_folder = files.select_destination(args)
 
-    collections.deque(animate.open_animate())
+    print_deque(animate.open_animate())
 
     print("Dumping samples...")
     for inp in input_files:
-        collections.deque(animate.dump_symbol_samples(inp, output_folder))
+        print_deque(animate.dump_symbol_samples(inp, output_folder))
     print("Done")
 
-def dump_shapes(args):
+def convert(args):
     animate = files.select_animate(args)
-    for message in animate.dump_shapes():
-        print(message)
+    input_files = files.select_source(args, [("FLA file", "*.fla"), ("XFL file", "*.xfl")])
+    output_path = files.select_destination(args)
+
+    print_deque(animate.open_animate())
+
+    for inp in input_files:
+        basename = os.path.splitext(os.path.basename(inp))[0]
+        outp = f"{os.path.join(output_path, basename)}"
+        print_deque(animate.convert(sourceFile=inp, outputDir=outp))
 
 
 def run_tests(args):
@@ -89,18 +99,18 @@ def run_tests(args):
 
     print()
     print("Opening Animate... ", end="", flush=True)
-    collections.deque(animate.open_animate())
+    print_deque(animate.open_animate())
     print("Done", flush=True)
 
     print("[Test] Checking ActionScript2 popup... ", end="", flush=True)
-    collections.deque(
+    print_deque(
         animate.open_file(sourceFile="./animate-tests/popup - as2 deprecation.fla")
     )
     print("Done", flush=True)
 
     print("[Test] Checking bitmap size popup... ", end="", flush=True)
     with tempfile.TemporaryDirectory() as temp_dirpath:
-        collections.deque(
+        print_deque(
             animate.dump_symbol_samples(
                 sourceFile="./animate-tests/popup - bitmap too large.fla",
                 outputDir=temp_dirpath,
@@ -109,13 +119,13 @@ def run_tests(args):
     print("Done", flush=True)
 
     print("[Test] Checking missing font popup... ", end="", flush=True)
-    collections.deque(
+    print_deque(
         animate.open_file(sourceFile="./animate-tests/popup - missing font.fla")
     )
     print("Done", flush=True)
 
     print("[Test] Checking invalid file popup... ", end="", flush=True)
-    collections.deque(
+    print_deque(
         animate.open_file(
             sourceFile="./animate-tests/popup - file cannot be opened.fla"
         )
@@ -134,8 +144,7 @@ def setup(args):
 --- ---
 The setup process does four things:
   1. If needed, walk you through downloading Adobe Animate.
-  2. It walks you through disabling the "missing font" dialog.
-  3. It walks you through downloading the data.
+  2. It walks you through downloading the data.
 
 You can quit at any time by pressing Ctrl+Shift+C simultaneously. [Enter]
 """)
@@ -154,6 +163,7 @@ When your browser opens to the page, look for the section titled
         webbrowser.open(vcpp_location)
 
     open_browser = input(f"""
+--- ---
 Once you have Visual C++ installed, you'll need the patched Adobe
 Animate. The patched Adobe Animate is here under
 "Adobe Animate 21.0.5.zip":
@@ -173,26 +183,9 @@ step, make sure to select that file. [Enter]
 
     animate = files.config_animate(args)
 
-    input("""
---- ---
-The first step is done. The second step is to disable the "missing
-font" dialog box. After you hit enter again, Adobe Animate will
-automatically open. You will see a popup telling you that some font
-isn't available. Make sure to check "Don't show again" then click OK.
-All of this will be in the Adobe Animate window that pops up. [Enter]
-""")
-
-    collections.deque(animate.open_animate())
-    print("""
---- ---
-Adobe Animate was successfully opened. Make sure to check the box
-and click OK.
-""")
-    collections.deque(animate.open_file(sourceFile="./animate-tests/popup - missing font.fla"))
-
     open_browser = input(f"""
 --- ---
-Done with step 2. Next, you should download the animation files and
+Done with step 1. Next, you should download the animation files and
 symbol labels. You can download as much of or as little of the animation
 files as you want, depending on what you want to do. The full dataset is
 192 gigabytes. There's a random sample of the dataset that's only 900 MB.
@@ -223,16 +216,20 @@ to the link? [y/n]
     input("""
 --- ---
 That's all. You can download the files as needed. You don't need to run this
-everytime you run the script. Your setup will persist unless you screw with
-Adobe Animate settings.
+everytime you run the script. Your setup will persist in the file config.txt.
 
 Here are the basic commands:
+  convert
+  - This will ask for an FLA file and a destination. It will convert the
+    FLA to XFL and it will convert all shape objects to SVG. This is the
+    command for converting FLA into a usable format.
+  dump-samples
+  - This will ask for an animation file and a destination. It will dump a
+    sample image of every symbol in the animation file. This is the command
+    for turning FLA into files we can label easily.
   dump-xfl
   - This will ask for an FLA file and a destination. It will convert the
     FLA to XFL.
-  dump-samples
-  - This will ask for an animation file and a destination. It will dump a
-    sample image of every symbol in the animation file.
   dump-texture-atlas
   - This will ask for an Animation Assets directory, a symbol sample
     image (which you can get from dump-samples), and a destination folder.
@@ -241,7 +238,7 @@ Here are the basic commands:
 You can add --batch to all of these. When you add, it will ask for folders
 instead of files. For example:
   dump-xfl --batch
-  - This Will convert a folder of FLA files, and it will search all sub-
+  - This will convert a folder of FLA files, and it will search all sub-
   directories.
 
 Adobe Animate will take focus when you execute any of these commands.
@@ -284,7 +281,10 @@ def main():
     cmd_dump_texture_atlas.add_argument("--sample", metavar="file|folder")
     cmd_dump_texture_atlas.add_argument("--output", metavar="folder")
 
-    cmd_dump_shapes = subparsers.add_parser("dump-shapes")
+    cmd_convert = subparsers.add_parser("convert")
+    cmd_convert.add_argument("--batch", action="store_true")
+    cmd_convert.add_argument("--input", type=str, metavar="file|folder")
+    cmd_convert.add_argument("--output", type=str, metavar="folder")
 
     cmd_setup = subparsers.add_parser("setup")
 
@@ -295,7 +295,7 @@ def main():
         "dump-xfl": dump_xfl,
         "dump-samples": dump_samples,
         "dump-texture-atlas": dump_texture_atlas,
-        "dump-shapes": dump_shapes,
+        "convert": convert,
         "run-tests": run_tests,
     }
 
@@ -303,12 +303,17 @@ def main():
   setup
   - This will walk you through setting up Adobe Animate and the animation
     data.
+  convert
+  - This will ask for an FLA file and a destination. It will convert the
+    FLA to XFL and it will convert all shape objects to SVG. This is the
+    command for converting FLA into a usable format.
+  dump-samples
+  - This will ask for an animation file and a destination. It will dump a
+    sample image of every symbol in the animation file. This is the command
+    for turning FLA into files we can label easily.
   dump-xfl
   - This will ask for an FLA file and a destination. It will convert the
     FLA to XFL.
-  dump-samples
-  - This will ask for an animation file and a destination. It will dump a
-    sample image of every symbol in the animation file.
   dump-texture-atlas
   - This will ask for an Animation Assets directory, a symbol sample
     image (which you can get from dump-samples), and a destination folder.
@@ -317,7 +322,7 @@ def main():
 You can add --batch to all of these. When you add, it will ask for folders
 instead of files. For example:
   dump-xfl --batch
-  - This Will convert a folder of FLA files, and it will search all sub-
+  - This will convert a folder of FLA files, and it will search all sub-
   directories.
 
 Adobe Animate will take focus when you execute any of these commands.

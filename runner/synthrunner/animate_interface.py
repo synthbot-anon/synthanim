@@ -182,10 +182,12 @@ class AnimateInterface:
             .replace(":", "|"),
         )
 
-    def dump_shapes(self):
+    def convert(self, sourceFile, outputDir):
         return self.run_script(
-            "./animate-scripts-dist/DumpShapes.jsfl",
-        )        
+            "./animate-scripts-dist/Convert.jsfl",
+            sourceFile=os.path.realpath(sourceFile).replace("\\", "/"),
+            outputDir=os.path.realpath(outputDir).replace("\\", "/")
+        )
 
     def open_file(self, sourceFile):
         return self.run_script(

@@ -1,5 +1,5 @@
 import synthrunner from 'common/synthrunner.js'
-import { getRootLayers, SymbolExporter } from 'common/AnimationTree.js';
+import { getAnimationFile, SymbolExporter } from 'common/AnimationTree.js';
 
 
 const sourceFile = "%sourceFile";
@@ -10,11 +10,13 @@ synthrunner((logger) => {
 	fl.closeAll()
 	document = fl.openDocument(`file:///${sourceFile}`);
 
-	const rootLayers = getRootLayers();
+	// const rootLayers = getAnimationFile().rootLayers;
 	const exporter = new SymbolExporter();
-	rootLayers.map((rootLayer) => {
-		exporter.addSequences(rootLayer.getSequences());
-	});
+	// rootLayers.map((rootLayer) => {
+	// 	exporter.addSequences(rootLayer.getSequences());
+	// });
+	const animationFile = getAnimationFile();
+	exporter.addAnimationFile(animationFile);
 
 	const sourceFileParts = sourceFile.split("/");
 	const sourceFileName = sourceFileParts[sourceFileParts.length - 1];

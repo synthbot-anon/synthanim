@@ -15,11 +15,13 @@ var assetFile = JSON.parse("%symbols");
 synthrunner_js_1["default"](function (logger) {
     fl.closeAll();
     document = fl.openDocument("file:///" + assetFile.sourceFile);
-    var rootLayers = AnimationTree_js_1.getRootLayers();
+    // const rootLayers = getAnimationFile().rootLayers;
     var exporter = new AnimationTree_js_1.SymbolExporter();
-    rootLayers.map(function (rootLayer) {
-        exporter.addSequences(rootLayer.getSequences());
-    });
+    // rootLayers.map((rootLayer) => {
+    // 	exporter.addSequences(rootLayer.getSequences());
+    // });
+    var animationFile = AnimationTree_js_1.getAnimationFile();
+    exporter.addAnimationFile(animationFile);
     assetFile.samples.forEach(function (sample) {
         exporter.dumpTextureAtlas(sample.symbolName, "file:///" + sample.destFolder);
         // exporter.dumpFramesForSymbol(symName);
@@ -547,7 +549,7 @@ var SymbolExporter = /** @class */ (function () {
             symbol.flSymbol.exportToPNGSequence(spritePath, frameIndex + 1, frameIndex + 1);
         }
         catch (err) {
-            synthrunner_js_1.logger.log("failed to convert", symbol.id);
+            synthrunner_js_1.logger.log("failed to convert item: ", symbol.id);
         }
         var framePath = getFrameFilename(spritePath, frameIndex + 2);
         FLfile.remove(framePath);
@@ -596,7 +598,7 @@ var SymbolExporter = /** @class */ (function () {
         var packer = new ImagePacker_js_1["default"]();
         var count = 0;
         // convert all shapes to symbols
-        var pendingConversions = Object.keys(this.animationFile.knownShapes).slice(30, 50);
+        var pendingConversions = Object.keys(this.animationFile.knownShapes);
         var lastPendingCount = pendingConversions.length;
         var nextPendingCount = 0;
         var completed = 0;
@@ -636,23 +638,17 @@ var SymbolExporter = /** @class */ (function () {
         while (nextPendingCount < lastPendingCount) {
             _loop_2();
         }
-        // pendingConversions = [
-        // 	pendingConversions[50],
-        // 	pendingConversions[54],
-        // 	pendingConversions[30],
-        // 	pendingConversions[66],
-        // 	pendingConversions[64],
-        // ];
+        var tempAssetDoc;
         if (pendingConversions.length) {
             synthrunner_js_1.logger.log("need to convert " + pendingConversions.length + " shapes through... other means");
-            var tempAssetDoc_1 = fl.createDocument("timeline");
-            var tempAnimationFile = new AnimationFile(tempAssetDoc_1);
-            var midX_1 = tempAssetDoc_1.width / 2;
-            var midY_1 = tempAssetDoc_1.height / 2;
+            tempAssetDoc = fl.createDocument("timeline");
+            var tempAnimationFile = new AnimationFile(tempAssetDoc);
+            var midX_1 = tempAssetDoc.width / 2;
+            var midY_1 = tempAssetDoc.height / 2;
             var failedConversions_1 = [];
             var getAssetFromTempAssetDoc_1 = function (assetName) {
-                var index = tempAssetDoc_1.library.findItemIndex(newNames[assetName]);
-                return tempAssetDoc_1.library.items[index];
+                var index = tempAssetDoc.library.findItemIndex(newNames[assetName]);
+                return tempAssetDoc.library.items[index];
             };
             pendingConversions.forEach(function (shapeName) {
                 var shape = _this.animationFile.knownShapes[shapeName];
@@ -663,24 +659,24 @@ var SymbolExporter = /** @class */ (function () {
                 }
                 try {
                     synthrunner_js_1.logger.log("converting " + shapeName + (" " + completed + " / " + total));
-                    tempAssetDoc_1.addItem({ x: midX_1, y: midY_1 }, parentSymbol.flSymbol);
-                    var flElement = tempAssetDoc_1.getTimeline().layers[0].frames[0].elements[0];
+                    tempAssetDoc.addItem({ x: midX_1, y: midY_1 }, parentSymbol.flSymbol);
+                    var flElement = tempAssetDoc.getTimeline().layers[0].frames[0].elements[0];
                     flElement.selected = true;
-                    tempAssetDoc_1.enterEditMode("inPlace");
+                    tempAssetDoc.enterEditMode("inPlace");
                     try {
-                        shape.refreshFlObjects(tempAssetDoc_1);
-                        shape.select(tempAssetDoc_1);
+                        shape.refreshFlObjects(tempAssetDoc);
+                        shape.select(tempAssetDoc);
                         var flShape = shape.flElement;
                         var width = flShape.width;
                         var height = flShape.height;
-                        var flSymbol = tempAssetDoc_1.convertToSymbol("graphic", shapeName, "center");
+                        var flSymbol = tempAssetDoc.convertToSymbol("graphic", shapeName, "center");
                         newNames[shapeName] = flSymbol.name;
                         packer.addImage(function () { return getAssetFromTempAssetDoc_1(shapeName); }, shape, width, height);
                         completed += 1;
                     }
                     finally {
-                        tempAssetDoc_1.exitEditMode();
-                        tempAssetDoc_1.deleteSelection();
+                        tempAssetDoc.exitEditMode();
+                        tempAssetDoc.deleteSelection();
                     }
                 }
                 catch (err) {
@@ -727,7 +723,7 @@ var SymbolExporter = /** @class */ (function () {
                     position.dump("adding " + shapeItem.name);
                     shapeDoc.addItem({ x: position.x(), y: position.y() }, shapeItem);
                     spritemap['sprites'].push({
-                        'symbolname': image.shape.layer.symbol.id,
+                        'symbolname': (image.shape.layer.symbol !== null) ? image.shape.layer.symbol.id : "",
                         'layerindex': image.shape.layer.layerIndex,
                         'frameindex': image.shape.frameIndex,
                         'elementindex': image.shape.elementIndex,
@@ -744,6 +740,10 @@ var SymbolExporter = /** @class */ (function () {
         synthrunner_js_1.logger.log("done");
         synthrunner_js_1.logger.log(JSON);
         FLfile.write("file:///" + folderPath + "/spritemap.json", JSON.stringify(spritemap, null, 4));
+        if (tempAssetDoc) {
+            fl.closeDocument(tempAssetDoc, false);
+        }
+        fl.closeDocument(shapeDoc, false);
     };
     return SymbolExporter;
 }());

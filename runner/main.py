@@ -7,7 +7,4 @@ if __name__ == '__main__':
     except Exception as err:
         print(err)
         traceback.print_exc()
-    except Error as err:
-        print(err)
-        traceback.print_exc()
     input('Press any key to continue')

@@ -574,7 +574,7 @@ export class SymbolExporter {
 		try {
 			symbol.flSymbol.exportToPNGSequence(spritePath, frameIndex+1, frameIndex+1);
 		} catch(err) {
-			logger.log("failed to convert", symbol.id);
+			logger.log("failed to convert item: ", symbol.id);
 		}
 
 		const framePath = getFrameFilename(spritePath, frameIndex+2);
@@ -632,7 +632,7 @@ export class SymbolExporter {
 		let count = 0;
 
 		// convert all shapes to symbols
-		let pendingConversions = Object.keys(this.animationFile.knownShapes).slice(30, 50);
+		let pendingConversions = Object.keys(this.animationFile.knownShapes);
 		let lastPendingCount = pendingConversions.length;
 		let nextPendingCount = 0;
 		let completed = 0;
@@ -675,17 +675,11 @@ export class SymbolExporter {
 			nextPendingCount = pendingConversions.length;
 		}
 
-		// pendingConversions = [
-		// 	pendingConversions[50],
-		// 	pendingConversions[54],
-		// 	pendingConversions[30],
-		// 	pendingConversions[66],
-		// 	pendingConversions[64],
-		// ];
+		let tempAssetDoc;
 
 		if (pendingConversions.length) {
 			logger.log("need to convert " + pendingConversions.length + " shapes through... other means");
-			const tempAssetDoc = fl.createDocument("timeline");
+			tempAssetDoc = fl.createDocument("timeline");
 			const tempAnimationFile = new AnimationFile(tempAssetDoc);
 			const midX = tempAssetDoc.width / 2;
 			const midY = tempAssetDoc.height / 2;
@@ -782,7 +776,7 @@ export class SymbolExporter {
 					position.dump("adding " + shapeItem.name)
 					shapeDoc.addItem({ x:position.x(), y:position.y() }, shapeItem);	
 					spritemap['sprites'].push({
-						'symbolname': image.shape.layer.symbol.id,
+						'symbolname': (image.shape.layer.symbol !== null) ? image.shape.layer.symbol.id : "",
 						'layerindex': image.shape.layer.layerIndex,
 						'frameindex': image.shape.frameIndex,
 						'elementindex': image.shape.elementIndex,
@@ -802,10 +796,13 @@ export class SymbolExporter {
 		logger.log("done");
 		logger.log(JSON);
 		FLfile.write(`file:///${folderPath}/spritemap.json`, JSON.stringify(spritemap, null, 4));
-		
+
+		if (tempAssetDoc) {
+			fl.closeDocument(tempAssetDoc, false);
+		}
+
+		fl.closeDocument(shapeDoc, false);
 	}
-
-
 }
 
 const getFrameFilename = (uri, frameIndex) => {
