@@ -624,7 +624,7 @@ export class SymbolExporter {
 		}
 	}
 
-	dumpShapeSpritesheet(filePath) {
+	dumpShapeSpritesheet(folderPath) {
 		const shapeNames = [];
 		const animationDoc = fl.getDocumentDOM();
 		const animationLibrary = animationDoc.library;
@@ -635,10 +635,12 @@ export class SymbolExporter {
 		let pendingConversions = Object.keys(this.animationFile.knownShapes);
 		let lastPendingCount = pendingConversions.length;
 		let nextPendingCount = 0;
+		let completed = 0;
+		let total = pendingConversions.length;
+		let newNames = {};
 
 		const getAssetFromAnimationDoc = (assetName) => {
-			logger.log("getting from animationDoc: " + assetName);
-			const index = animationDoc.library.findItemIndex(assetName.replaceAll("/", "-"));
+			const index = animationDoc.library.findItemIndex(newNames[assetName]);
 			return animationDoc.library.items[index];
 		}
 		
@@ -651,14 +653,17 @@ export class SymbolExporter {
 			pendingConversions.forEach((shapeName) => {
 				// collect all failing items, copy to another sheet's timeline, and try again
 				try {
-					logger.log("converting " + shapeName);
+					logger.log("converting " + shapeName + ` ${completed} / ${total}`);
 					const shape = this.animationFile.knownShapes[shapeName];
 					this.animationFile.selectElement(shape);
 
 					const flShape = shape.flElement;
-					packer.addImage(() => getAssetFromAnimationDoc(shapeName), flShape.width, flShape.height);
-					animationDoc.convertToSymbol("graphic", shapeName, "top left");
-					logger.log("successfully converted " + shapeName);
+					const width = flShape.width;
+					const height = flShape.height;
+					const flSymbol = animationDoc.convertToSymbol("graphic", shapeName, "center");
+					newNames[shapeName] = flSymbol.name;
+					packer.addImage(() => getAssetFromAnimationDoc(shapeName), shapeName, width, height);
+					completed += 1;
 				} catch(err) {
 					logger.log("delaying conversion for " + shapeName);
 					failedConversions.push(shapeName);
@@ -687,8 +692,8 @@ export class SymbolExporter {
 			const failedConversions = [];
 
 			const getAssetFromTempAssetDoc = (assetName) => {
-				logger.log("getting from assetdoc: " + assetName);
-				const index = tempAssetDoc.library.findItemIndex(assetName.replaceAll("/", "-"));
+
+				const index = tempAssetDoc.library.findItemIndex(newNames[assetName]);
 				return tempAssetDoc.library.items[index];
 			}
 
@@ -702,7 +707,7 @@ export class SymbolExporter {
 				}
 
 				try {
-					logger.log("converting " + shapeName);
+					logger.log("converting " + shapeName + ` ${completed} / ${total}`);
 
 					tempAssetDoc.addItem({ x:midX, y:midY }, parentSymbol.flSymbol);
 					
@@ -715,13 +720,12 @@ export class SymbolExporter {
 						shape.select(tempAssetDoc);
 
 						const flShape = shape.flElement;
-						packer.addImage(() => getAssetFromTempAssetDoc(shapeName), flShape.width, flShape.height);
-						tempAssetDoc.convertToSymbol("graphic", shapeName, "top left");
-						logger.log("successfully converted " + shapeName);
-
-						const shapeSymbol = getAssetFromTempAssetDoc(shapeName);
-						animationDoc.library.items.push(shapeSymbol);
-
+						const width = flShape.width;
+						const height = flShape.height;
+						const flSymbol = tempAssetDoc.convertToSymbol("graphic", shapeName, "center");
+						newNames[shapeName] = flSymbol.name;
+						packer.addImage(() => getAssetFromTempAssetDoc(shapeName), shapeName, width, height);
+						completed += 1;
 					} finally {
 						tempAssetDoc.exitEditMode();
 						tempAssetDoc.deleteSelection();
@@ -734,9 +738,12 @@ export class SymbolExporter {
 				}
 			});
 
-			logger.log("failed conversions...");
-			failedConversions.forEach((x) => logger.log("x: " + x));
-			logger.log("---");
+			if (failedConversions.length) {
+				logger.log("--- failed conversions ---");
+				failedConversions.forEach((x) => logger.log("x: " + x));
+				logger.log("--- ---");	
+			}
+			
 		}
 
 
@@ -747,38 +754,55 @@ export class SymbolExporter {
 		const shapeLibrary = shapeDoc.library;
 		const insertions = packer.toFrames(); // insertion[frameIndex] = { image, position }
 
-		shapeTimeline.insertFrames(insertions.length - 1);
+		FLfile.createFolder(`file:///${folderPath}`);
+		const spritemap = {};
+		spritemap['ATLAS'] = {};
+		spritemap['ATLAS']['SPRITES'] = [];
+		spritemap['meta'] = {
+			'app': 'Synthrunner - Pony Preservation Project',
+			'version': '21.7.2.1',
+			'format': 'SVG',
+			'size': {'w':8192, 'h':8192}
+		}
+
 		insertions.forEach((frame, frameIndex) => {
-			shapeTimeline.currentFrame = frameIndex;
+			if (frameIndex !== 0) {
+				shapeTimeline.insertBlankKeyframe();
+				shapeTimeline.currentFrame = frameIndex;
+			}
+
+			const imageName = `spritemap${frameIndex}.svg`
+			const imagePath = `file:///${folderPath}/${imageName}`;
+
 			frame.forEach(({image, position}) => {
 				const shapeItem = image.data();
-				logger.log("position: " + position);
-				logger.log("adding to " + position.x() +  ", " + position.y());
-				logger.log("adding item: " + shapeItem.name);
-				logger.log("... " + shapeItem);
-				shapeDoc.addItem({ x:position.x(), y:position.y() }, shapeItem);
+
+				if (position === null) {
+					logger.log("... skipping " + shapeItem.name);
+				} else {
+					position.dump("adding " + shapeItem.name)
+					shapeDoc.addItem({ x:position.x(), y:position.y() }, shapeItem);	
+					spritemap['ATLAS']['SPRITES'].push({
+						'xflname': image.name,
+						'svgname': shapeItem.name,
+						'x': position.x(),
+						'y': position.y(),
+						'applyScale': image.applyScale,
+						'filename': imageName
+					})
+				}
 			});
+
+			shapeDoc.exportSVG(imagePath, true, true);
 		})
 
 		logger.log("done");
+		logger.log(JSON);
+		FLfile.write(`file:///${folderPath}/spritemap.json`, JSON.stringify(spritemap, null, 4));
 		
-
-
-		// 1. collect all shape objects, track them and convert them to symbols
-		// 2. remove all objects from the scene
-		// 3. get the total width and height of the shapes
-		// 4. figure out how many svgs are required
-		// 5. lay shapes out in a grid, create a spritesheet with the info
 	}
 
-	dumpShapeSpritesheet2(filePath) {
-		const baseDoc = fl.getDocumentDOM();
-		const assetDoc = fl.createDocument("timeline");
 
-		baseDoc.library.items.forEach((baseItem) => {
-			assetDoc.addItem({ x:0, y:0 }, baseItem);		
-		})
-	}
 }
 
 const getFrameFilename = (uri, frameIndex) => {

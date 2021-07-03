@@ -127,6 +127,7 @@ def run_tests(args):
 
 
 def setup(args):
+    vcpp_location = "https://support.microsoft.com/en-us/topic/the-latest-supported-visual-c-downloads-2647da03-1eea-4433-9aff-95f26a218cc0"
     animate_location = "https://drive.google.com/drive/folders/17hgz4fbIqYetvxHh2MX1KdTP6efIauUU?usp=sharing"
     data_location = "https://drive.google.com/drive/u/2/folders/1kk8Xb5Xht4wahyHYOIVpMRtB69eg3Yhl"
     have_animate = input("""
@@ -140,8 +141,22 @@ You can quit at any time by pressing Ctrl+Shift+C simultaneously. [Enter]
 """)
     open_browser = input(f"""
 --- ---
-You'll need the patched Adobe Animate. The patched Adobe Animate is
-here under "Adobe Animate 21.0.5.zip":
+To run Adobe Animate, you'll first need to install Microsoft Visual
+C++. If you don't already have it installed (or don't know), you
+should try installing it now. Do you want to open a browser to the
+download page? [y/n]
+""")
+    if open_browser and open_browser[0].lower() == 'y':
+        proceed = input("""
+When your browser opens to the page, look for the section titled
+"Visual Studio 2015, 2017 and 2019". [Enter]
+""")
+        webbrowser.open(vcpp_location)
+
+    open_browser = input(f"""
+Once you have Visual C++ installed, you'll need the patched Adobe
+Animate. The patched Adobe Animate is here under
+"Adobe Animate 21.0.5.zip":
 - {animate_location}
 Do you want to open a browser to this location? [y/n]
 """)

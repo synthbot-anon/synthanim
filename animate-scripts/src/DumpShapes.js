@@ -17,7 +17,7 @@ synthrunner((logger) => {
 	// const sourceFileParts = sourceFile.split("/");
 	// const sourceFileName = sourceFileParts[sourceFileParts.length - 1];
 
-	exporter.dumpShapeSpritesheet(); //sourceFileName, outputDir);
+	exporter.dumpShapeSpritesheet("C:/Users/synthbot/Desktop/berry-dest/dump-test/dump3"); //sourceFileName, outputDir);
 	// fl.closeDocument(document, false);
 });
 		

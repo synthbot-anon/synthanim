@@ -627,7 +627,7 @@ var SymbolExporter = /** @class */ (function () {
             this.dumpSymbolSequences(symbol, frames, folder);
         }
     };
-    SymbolExporter.prototype.dumpShapeSpritesheet = function (filePath) {
+    SymbolExporter.prototype.dumpShapeSpritesheet = function (folderPath) {
         var _this = this;
         var shapeNames = [];
         var animationDoc = fl.getDocumentDOM();
@@ -638,9 +638,11 @@ var SymbolExporter = /** @class */ (function () {
         var pendingConversions = Object.keys(this.animationFile.knownShapes);
         var lastPendingCount = pendingConversions.length;
         var nextPendingCount = 0;
+        var completed = 0;
+        var total = pendingConversions.length;
+        var newNames = {};
         var getAssetFromAnimationDoc = function (assetName) {
-            synthrunner_js_1.logger.log("getting from animationDoc: " + assetName);
-            var index = animationDoc.library.findItemIndex(assetName.replaceAll("/", "-"));
+            var index = animationDoc.library.findItemIndex(newNames[assetName]);
             return animationDoc.library.items[index];
         };
         var _loop_2 = function () {
@@ -650,13 +652,16 @@ var SymbolExporter = /** @class */ (function () {
             pendingConversions.forEach(function (shapeName) {
                 // collect all failing items, copy to another sheet's timeline, and try again
                 try {
-                    synthrunner_js_1.logger.log("converting " + shapeName);
+                    synthrunner_js_1.logger.log("converting " + shapeName + (" " + completed + " / " + total));
                     var shape = _this.animationFile.knownShapes[shapeName];
                     _this.animationFile.selectElement(shape);
                     var flShape = shape.flElement;
-                    packer.addImage(function () { return getAssetFromAnimationDoc(shapeName); }, flShape.width, flShape.height);
-                    animationDoc.convertToSymbol("graphic", shapeName, "top left");
-                    synthrunner_js_1.logger.log("successfully converted " + shapeName);
+                    var width = flShape.width;
+                    var height = flShape.height;
+                    var flSymbol = animationDoc.convertToSymbol("graphic", shapeName, "center");
+                    newNames[shapeName] = flSymbol.name;
+                    packer.addImage(function () { return getAssetFromAnimationDoc(shapeName); }, shapeName, width, height);
+                    completed += 1;
                 }
                 catch (err) {
                     synthrunner_js_1.logger.log("delaying conversion for " + shapeName);
@@ -685,8 +690,7 @@ var SymbolExporter = /** @class */ (function () {
             var midY_1 = tempAssetDoc_1.height / 2;
             var failedConversions_1 = [];
             var getAssetFromTempAssetDoc_1 = function (assetName) {
-                synthrunner_js_1.logger.log("getting from assetdoc: " + assetName);
-                var index = tempAssetDoc_1.library.findItemIndex(assetName.replaceAll("/", "-"));
+                var index = tempAssetDoc_1.library.findItemIndex(newNames[assetName]);
                 return tempAssetDoc_1.library.items[index];
             };
             pendingConversions.forEach(function (shapeName) {
@@ -697,7 +701,7 @@ var SymbolExporter = /** @class */ (function () {
                     return;
                 }
                 try {
-                    synthrunner_js_1.logger.log("converting " + shapeName);
+                    synthrunner_js_1.logger.log("converting " + shapeName + (" " + completed + " / " + total));
                     tempAssetDoc_1.addItem({ x: midX_1, y: midY_1 }, parentSymbol.flSymbol);
                     var flElement = tempAssetDoc_1.getTimeline().layers[0].frames[0].elements[0];
                     flElement.selected = true;
@@ -706,11 +710,12 @@ var SymbolExporter = /** @class */ (function () {
                         shape.refreshFlObjects(tempAssetDoc_1);
                         shape.select(tempAssetDoc_1);
                         var flShape = shape.flElement;
-                        packer.addImage(function () { return getAssetFromTempAssetDoc_1(shapeName); }, flShape.width, flShape.height);
-                        tempAssetDoc_1.convertToSymbol("graphic", shapeName, "top left");
-                        synthrunner_js_1.logger.log("successfully converted " + shapeName);
-                        var shapeSymbol = getAssetFromTempAssetDoc_1(shapeName);
-                        animationDoc.library.items.push(shapeSymbol);
+                        var width = flShape.width;
+                        var height = flShape.height;
+                        var flSymbol = tempAssetDoc_1.convertToSymbol("graphic", shapeName, "center");
+                        newNames[shapeName] = flSymbol.name;
+                        packer.addImage(function () { return getAssetFromTempAssetDoc_1(shapeName); }, shapeName, width, height);
+                        completed += 1;
                     }
                     finally {
                         tempAssetDoc_1.exitEditMode();
@@ -723,9 +728,11 @@ var SymbolExporter = /** @class */ (function () {
                     failedConversions_1.push(shapeName);
                 }
             });
-            synthrunner_js_1.logger.log("failed conversions...");
-            failedConversions_1.forEach(function (x) { return synthrunner_js_1.logger.log("x: " + x); });
-            synthrunner_js_1.logger.log("---");
+            if (failedConversions_1.length) {
+                synthrunner_js_1.logger.log("--- failed conversions ---");
+                failedConversions_1.forEach(function (x) { return synthrunner_js_1.logger.log("x: " + x); });
+                synthrunner_js_1.logger.log("--- ---");
+            }
         }
         var shapeDoc = fl.createDocument("timeline");
         shapeDoc.width = 8192;
@@ -733,32 +740,47 @@ var SymbolExporter = /** @class */ (function () {
         var shapeTimeline = shapeDoc.getTimeline();
         var shapeLibrary = shapeDoc.library;
         var insertions = packer.toFrames(); // insertion[frameIndex] = { image, position }
-        shapeTimeline.insertFrames(insertions.length - 1);
+        FLfile.createFolder("file:///" + folderPath);
+        var spritemap = {};
+        spritemap['ATLAS'] = {};
+        spritemap['ATLAS']['SPRITES'] = [];
+        spritemap['meta'] = {
+            'app': 'Synthrunner - Pony Preservation Project',
+            'version': '21.7.2.1',
+            'format': 'SVG',
+            'size': { 'w': 8192, 'h': 8192 }
+        };
         insertions.forEach(function (frame, frameIndex) {
-            shapeTimeline.currentFrame = frameIndex;
+            if (frameIndex !== 0) {
+                shapeTimeline.insertBlankKeyframe();
+                shapeTimeline.currentFrame = frameIndex;
+            }
+            var imageName = "spritemap" + frameIndex + ".svg";
+            var imagePath = "file:///" + folderPath + "/" + imageName;
             frame.forEach(function (_a) {
                 var image = _a.image, position = _a.position;
                 var shapeItem = image.data();
-                synthrunner_js_1.logger.log("position: " + position);
-                synthrunner_js_1.logger.log("adding to " + position.x() + ", " + position.y());
-                synthrunner_js_1.logger.log("adding item: " + shapeItem.name);
-                synthrunner_js_1.logger.log("... " + shapeItem);
-                shapeDoc.addItem({ x: position.x(), y: position.y() }, shapeItem);
+                if (position === null) {
+                    synthrunner_js_1.logger.log("... skipping " + shapeItem.name);
+                }
+                else {
+                    position.dump("adding " + shapeItem.name);
+                    shapeDoc.addItem({ x: position.x(), y: position.y() }, shapeItem);
+                    spritemap['ATLAS']['SPRITES'].push({
+                        'xflname': image.name,
+                        'svgname': shapeItem.name,
+                        'x': position.x(),
+                        'y': position.y(),
+                        'applyScale': image.applyScale,
+                        'filename': imageName
+                    });
+                }
             });
+            shapeDoc.exportSVG(imagePath, true, true);
         });
         synthrunner_js_1.logger.log("done");
-        // 1. collect all shape objects, track them and convert them to symbols
-        // 2. remove all objects from the scene
-        // 3. get the total width and height of the shapes
-        // 4. figure out how many svgs are required
-        // 5. lay shapes out in a grid, create a spritesheet with the info
-    };
-    SymbolExporter.prototype.dumpShapeSpritesheet2 = function (filePath) {
-        var baseDoc = fl.getDocumentDOM();
-        var assetDoc = fl.createDocument("timeline");
-        baseDoc.library.items.forEach(function (baseItem) {
-            assetDoc.addItem({ x: 0, y: 0 }, baseItem);
-        });
+        synthrunner_js_1.logger.log(JSON);
+        FLfile.write("file:///" + folderPath + "/spritemap.json", JSON.stringify(spritemap, null, 4));
     };
     return SymbolExporter;
 }());
@@ -773,7 +795,7 @@ var getFrameFilename = function (uri, frameIndex) {
 /***/ }),
 
 /***/ 123:
-/***/ (function(__unused_webpack_module, exports) {
+/***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
 
@@ -785,38 +807,57 @@ var __spreadArrays = (this && this.__spreadArrays) || function () {
     return r;
 };
 exports.__esModule = true;
+var synthrunner_js_1 = __webpack_require__(674);
 var ImagePacker = /** @class */ (function () {
     function ImagePacker(frameWidth, frameHeight) {
         this.images = [];
         this.frameWidth = frameWidth || 8192;
         this.frameHeight = frameHeight || 8192;
     }
-    ImagePacker.prototype.addImage = function (image, width, height) {
-        this.images.push(new Image(image, Math.ceil(width), Math.ceil(height)));
+    ImagePacker.prototype.addImage = function (image, name, width, height) {
+        this.images.push(new Image(image, name, Math.ceil(width), Math.ceil(height)));
     };
     ImagePacker.prototype.toFrames = function () {
+        var _this = this;
         var frames = [];
         var options = [];
         this.images.forEach(function (image) {
             for (var optIndex = 0; optIndex < options.length; optIndex++) {
                 var opt = options[optIndex];
                 var position_1 = opt.tryInserting(image);
-                if (position_1) {
+                if (position_1 !== null) {
                     // add the image to the selected frame
                     frames[opt.frame].push({ image: image, position: position_1 });
                     // make sure the same space isn't used again
                     var newOpts = opt.splitAround(position_1);
                     options.splice.apply(options, __spreadArrays([optIndex, 1], newOpts));
-                    insertedImage = true;
                     return;
                 }
             }
             // could not fit the image into existing options...
             // put it into a new frame
-            var newFrame = new PositionOption(frames.length, 0, 0, 8192, 8192);
+            var newFrame = new PositionOption(frames.length, 0, 0, _this.frameWidth, _this.frameHeight);
             var position = newFrame.tryInserting(image);
-            frames.push([{ image: image, position: position }]);
-            options.push.apply(options, newFrame.splitAround(position));
+            if (position !== null) {
+                synthrunner_js_1.logger.log("added to new frame " + image.width + ", " + image.height);
+                options.push.apply(options, newFrame.splitAround(position));
+                frames.push([{ image: image, position: position }]);
+                return;
+            }
+            // it doesn't fit into a frame... force it to fit
+            // const targetWidth = this.frameWidth;
+            // const targetHeight = this.frameHeight;
+            // const scaleWidth = image.width / targetWidth;
+            // const scaleHeight = image.height / targetHeight;
+            // image.requireScale(Math.max(scaleWidth, scaleHeight) * 1.1);
+            // position = newFrame.tryInserting(image);
+            // if (position !== null) {
+            // 	logger.log("scaled to new frame " + image.width + ", " + image.height)
+            // 	options.push(...newFrame.splitAround(position));
+            // 	frames.push([{image, position}]);
+            // 	return;	
+            // }
+            synthrunner_js_1.logger.log("failed to fit " + image.data().name);
         });
         return frames;
     };
@@ -832,15 +873,20 @@ var PositionOption = /** @class */ (function () {
         this.yb = yb;
     }
     PositionOption.prototype.tryInserting = function (image) {
-        if (image.height > (this.yb - this.yt)) {
-            return null;
-        }
-        if (image.width > (this.xr - this.xl)) {
-            return null;
-        }
         var imageXr = this.xl + image.width;
         var imageYb = this.yt + image.height;
-        return new PositionOption(this.frame, this.xl, this.yt, imageXr, imageYb);
+        var hypothetical = new PositionOption(this.frame, this.xl, this.yt, imageXr, imageYb);
+        if (!hypothetical.valid()) {
+            synthrunner_js_1.logger.log("imageXr: " + imageXr);
+            synthrunner_js_1.logger.log("imageYb: " + imageYb);
+            synthrunner_js_1.logger.log("xl: " + this.xl);
+            synthrunner_js_1.logger.log("yt: " + this.yt);
+            return null;
+        }
+        if ((imageXr > this.xr) || (imageYb > this.yb)) {
+            return null;
+        }
+        return hypothetical;
     };
     PositionOption.prototype.x = function () {
         return (this.xl + this.xr) / 2;
@@ -854,22 +900,28 @@ var PositionOption = /** @class */ (function () {
     PositionOption.prototype.width = function () {
         return this.xr - this.xl;
     };
+    PositionOption.prototype.dump = function (prefix) {
+        synthrunner_js_1.logger.log(prefix + ": " + this.xl + ", " + this.yt + " to " + this.xr + ", " + this.yb);
+    };
+    PositionOption.prototype.valid = function () {
+        return (this.height() > 0) && (this.width() > 0);
+    };
     PositionOption.prototype.splitAround = function (position) {
-        var left = new PositionOption(this.frame, this.xl, this.yt, position.xl, this.yb);
-        var right = new PositionOption(this.frame, position.xr, this.yt, this.xr, this.yb);
+        var left = new PositionOption(this.frame, this.xl, position.yt, position.xl, position.yb);
+        var right = new PositionOption(this.frame, position.xr, position.yt, this.xr, position.yb);
         var top = new PositionOption(this.frame, this.xl, this.yt, this.xr, position.yt);
         var bottom = new PositionOption(this.frame, this.xl, position.yb, this.xr, this.yb);
         var result = [];
-        if (left.height() && this.width()) {
-            result.push(left);
-        }
-        if (right.height() && right.width()) {
-            result.push(right);
-        }
-        if (top.height() && top.width()) {
+        if (top.valid()) {
             result.push(top);
         }
-        if (bottom.height() && bottom.width()) {
+        if (left.valid()) {
+            result.push(left);
+        }
+        if (right.valid()) {
+            result.push(right);
+        }
+        if (bottom.valid()) {
             result.push(bottom);
         }
         return result;
@@ -877,11 +929,19 @@ var PositionOption = /** @class */ (function () {
     return PositionOption;
 }());
 var Image = /** @class */ (function () {
-    function Image(data, width, height) {
+    function Image(data, name, width, height) {
         this.data = data;
+        this.name = name;
         this.width = width;
         this.height = height;
+        this.applyScale = 1.0;
     }
+    Image.prototype.requireScale = function (factor) {
+        synthrunner_js_1.logger.log("scaling down by " + factor);
+        this.width = this.width / factor;
+        this.height = this.height / factor;
+        this.applyScale = this.applyScale * factor;
+    };
     return Image;
 }());
 
