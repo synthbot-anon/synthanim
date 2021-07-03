@@ -632,7 +632,7 @@ export class SymbolExporter {
 		let count = 0;
 
 		// convert all shapes to symbols
-		let pendingConversions = Object.keys(this.animationFile.knownShapes);
+		let pendingConversions = Object.keys(this.animationFile.knownShapes).slice(30, 50);
 		let lastPendingCount = pendingConversions.length;
 		let nextPendingCount = 0;
 		let completed = 0;
@@ -662,7 +662,7 @@ export class SymbolExporter {
 					const height = flShape.height;
 					const flSymbol = animationDoc.convertToSymbol("graphic", shapeName, "center");
 					newNames[shapeName] = flSymbol.name;
-					packer.addImage(() => getAssetFromAnimationDoc(shapeName), shapeName, width, height);
+					packer.addImage(() => getAssetFromAnimationDoc(shapeName), shape, width, height);
 					completed += 1;
 				} catch(err) {
 					logger.log("delaying conversion for " + shapeName);
@@ -724,7 +724,7 @@ export class SymbolExporter {
 						const height = flShape.height;
 						const flSymbol = tempAssetDoc.convertToSymbol("graphic", shapeName, "center");
 						newNames[shapeName] = flSymbol.name;
-						packer.addImage(() => getAssetFromTempAssetDoc(shapeName), shapeName, width, height);
+						packer.addImage(() => getAssetFromTempAssetDoc(shapeName), shape, width, height);
 						completed += 1;
 					} finally {
 						tempAssetDoc.exitEditMode();
@@ -756,12 +756,11 @@ export class SymbolExporter {
 
 		FLfile.createFolder(`file:///${folderPath}`);
 		const spritemap = {};
-		spritemap['ATLAS'] = {};
-		spritemap['ATLAS']['SPRITES'] = [];
+		spritemap['sprites'] = [];
 		spritemap['meta'] = {
 			'app': 'Synthrunner - Pony Preservation Project',
 			'version': '21.7.2.1',
-			'format': 'SVG',
+			'format': 'svg',
 			'size': {'w':8192, 'h':8192}
 		}
 
@@ -782,13 +781,17 @@ export class SymbolExporter {
 				} else {
 					position.dump("adding " + shapeItem.name)
 					shapeDoc.addItem({ x:position.x(), y:position.y() }, shapeItem);	
-					spritemap['ATLAS']['SPRITES'].push({
-						'xflname': image.name,
-						'svgname': shapeItem.name,
+					spritemap['sprites'].push({
+						'symbolname': image.shape.layer.symbol.id,
+						'layerindex': image.shape.layer.layerIndex,
+						'frameindex': image.shape.frameIndex,
+						'elementindex': image.shape.elementIndex,
+						'filename': imageName,
+						'svgprefix': shapeItem.name,
 						'x': position.x(),
 						'y': position.y(),
-						'applyScale': image.applyScale,
-						'filename': imageName
+						'applyscale': image.applyScale
+						
 					})
 				}
 			});

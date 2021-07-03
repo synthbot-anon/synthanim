@@ -596,7 +596,7 @@ var SymbolExporter = /** @class */ (function () {
         var packer = new ImagePacker_js_1["default"]();
         var count = 0;
         // convert all shapes to symbols
-        var pendingConversions = Object.keys(this.animationFile.knownShapes);
+        var pendingConversions = Object.keys(this.animationFile.knownShapes).slice(30, 50);
         var lastPendingCount = pendingConversions.length;
         var nextPendingCount = 0;
         var completed = 0;
@@ -621,7 +621,7 @@ var SymbolExporter = /** @class */ (function () {
                     var height = flShape.height;
                     var flSymbol = animationDoc.convertToSymbol("graphic", shapeName, "center");
                     newNames[shapeName] = flSymbol.name;
-                    packer.addImage(function () { return getAssetFromAnimationDoc(shapeName); }, shapeName, width, height);
+                    packer.addImage(function () { return getAssetFromAnimationDoc(shapeName); }, shape, width, height);
                     completed += 1;
                 }
                 catch (err) {
@@ -675,7 +675,7 @@ var SymbolExporter = /** @class */ (function () {
                         var height = flShape.height;
                         var flSymbol = tempAssetDoc_1.convertToSymbol("graphic", shapeName, "center");
                         newNames[shapeName] = flSymbol.name;
-                        packer.addImage(function () { return getAssetFromTempAssetDoc_1(shapeName); }, shapeName, width, height);
+                        packer.addImage(function () { return getAssetFromTempAssetDoc_1(shapeName); }, shape, width, height);
                         completed += 1;
                     }
                     finally {
@@ -703,12 +703,11 @@ var SymbolExporter = /** @class */ (function () {
         var insertions = packer.toFrames(); // insertion[frameIndex] = { image, position }
         FLfile.createFolder("file:///" + folderPath);
         var spritemap = {};
-        spritemap['ATLAS'] = {};
-        spritemap['ATLAS']['SPRITES'] = [];
+        spritemap['sprites'] = [];
         spritemap['meta'] = {
             'app': 'Synthrunner - Pony Preservation Project',
             'version': '21.7.2.1',
-            'format': 'SVG',
+            'format': 'svg',
             'size': { 'w': 8192, 'h': 8192 }
         };
         insertions.forEach(function (frame, frameIndex) {
@@ -727,13 +726,16 @@ var SymbolExporter = /** @class */ (function () {
                 else {
                     position.dump("adding " + shapeItem.name);
                     shapeDoc.addItem({ x: position.x(), y: position.y() }, shapeItem);
-                    spritemap['ATLAS']['SPRITES'].push({
-                        'xflname': image.name,
-                        'svgname': shapeItem.name,
+                    spritemap['sprites'].push({
+                        'symbolname': image.shape.layer.symbol.id,
+                        'layerindex': image.shape.layer.layerIndex,
+                        'frameindex': image.shape.frameIndex,
+                        'elementindex': image.shape.elementIndex,
+                        'filename': imageName,
+                        'svgprefix': shapeItem.name,
                         'x': position.x(),
                         'y': position.y(),
-                        'applyScale': image.applyScale,
-                        'filename': imageName
+                        'applyscale': image.applyScale
                     });
                 }
             });
@@ -775,8 +777,8 @@ var ImagePacker = /** @class */ (function () {
         this.frameWidth = frameWidth || 8192;
         this.frameHeight = frameHeight || 8192;
     }
-    ImagePacker.prototype.addImage = function (image, name, width, height) {
-        this.images.push(new Image(image, name, Math.ceil(width), Math.ceil(height)));
+    ImagePacker.prototype.addImage = function (image, shape, width, height) {
+        this.images.push(new Image(image, shape, Math.ceil(width), Math.ceil(height)));
     };
     ImagePacker.prototype.toFrames = function () {
         var _this = this;
@@ -890,9 +892,9 @@ var PositionOption = /** @class */ (function () {
     return PositionOption;
 }());
 var Image = /** @class */ (function () {
-    function Image(data, name, width, height) {
+    function Image(data, shape, width, height) {
         this.data = data;
-        this.name = name;
+        this.shape = shape;
         this.width = width;
         this.height = height;
         this.applyScale = 1.0;
