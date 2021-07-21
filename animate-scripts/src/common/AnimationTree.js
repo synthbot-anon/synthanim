@@ -42,6 +42,8 @@ class AnimationFile {
 		this.symbolIdFromGuid = {};
 		this.knownShapes = {};
 		this.shapeIdFromGuid = {};
+		this.knownMovies = {};
+		this.movieIdFromGuid = {};
 		this.knownLayers = {};
 		this.rootLayers = this.rootTimeline.layers.map((x, i) => {
 			const layerId = `L${i}`;
@@ -72,7 +74,16 @@ class AnimationFile {
 		return proposal;	
 	}
 
-	enterElement(animationElement) {
+	getMovieId(proposal, guid) {
+		if (guid in this.movieIdFromGuid) {
+			return this.movieIdFromGuid[guid];
+		}
+
+		this.movieIdFromGuid[guid] = proposal;
+		return proposal;
+	}
+
+	enterElement(animationElement, fn) {
 		const commonAncestor = null;
 		const currentElementToAncestor = [];
 
@@ -101,8 +112,9 @@ class AnimationFile {
 		// go down to the next shape
 		while (currentElementToAncestor.length) {
 			const nextElement = currentElementToAncestor.pop();
+			fn(nextElement)
+
 			nextElement.refreshFlObjects();
-			
 			nextElement.select();
 
 			// nextElement.layer.flLayer.locked = false;
@@ -120,10 +132,11 @@ class AnimationFile {
 		}
 	}
 
-	selectElement(animationElement) {
+	selectElement(animationElement, fn) {
 		const parent = animationElement.layer.symbol;
-		this.enterElement(parent);
+		this.enterElement(parent, fn);
 		
+		fn(animationElement)
 		animationElement.refreshFlObjects();
 		animationElement.select();
 		// const shapeTimeline = this.flDocument.getTimeline();
@@ -176,6 +189,8 @@ class AnimationElement {
 		(doc || this.file.flDocument).getTimeline().currentFrame = this.frameIndex;
 		this.layer.flLayer.locked = false;
 		this.layer.flLayer.visible = true;
+		this.layer.flLayer.layerType = "normal";
+		this.file.flDocument.livePreview = true;
 		(doc || this.file.flDocument).selectNone();
 		this.flElement.selected = true
 		// this.file.flDocument.selection = [this.flElement];
@@ -194,6 +209,14 @@ class AnimationElement {
 class AnimationShape extends AnimationElement {
 	constructor(file, layer, frameIndex, shapeId, flElement, elementIndex) {
 		super(file, layer, frameIndex, shapeId, flElement, elementIndex);
+		this.transformX = flElement.transformX;
+		this.transformY = flElement.transformY;
+	}
+}
+
+class AnimationMovie extends AnimationElement {
+	constructor(file, layer, frameIndex, movieId, flElement, elementIndex) {
+		super(file, layer, frameIndex, movieId, flElement, elementIndex);
 	}
 }
 
@@ -204,6 +227,7 @@ class AnimationSymbol extends AnimationElement {
 		this.timeline = flElement.libraryItem.timeline;
 		this.names = {};
 		this.frames = [];
+		this.movieClip = elementIsMovieClip(flElement);
 	}
 
 	attachName(name) {
@@ -221,6 +245,7 @@ class AnimationSymbol extends AnimationElement {
 		}
 
 		const result = new AnimationLayer(this.file, this, layerId, flLayer, layerIndex);
+		result.movieClip = this.movieClip;
 		this.file.knownLayers[layerId] = result;
 		return result;
 	}
@@ -247,6 +272,7 @@ class SymbolFrame {
 
 		while (pending.length !== 0) {
 			const currentSymbolFrame = pending.pop();
+
 			result.push(currentSymbolFrame);
 			currentSymbolFrame.symbol.getLayers().forEach((childLayer) => {
 				const layerFrames = childLayer.getSymbolFrames(currentSymbolFrame.frameIndex);
@@ -257,6 +283,8 @@ class SymbolFrame {
 					pending.push(...layerFrames);
 				}
 			});
+
+			inSymbol1 = false;
 		}
 
 		return result;
@@ -325,6 +353,7 @@ class AnimationLayer {
 		this.flLayer = flLayer;
 		this.name = flLayer.name;
 		this.layerIndex = layerIndex;
+		this.movieClip = false;
 	}
 
 	getSymbolFromFlElement(frameIndex, elementIndex, flElement) {
@@ -353,6 +382,19 @@ class AnimationLayer {
 		return result;
 	}
 
+	getMovieFlElement(frameIndex, elementIndex, flElement) {
+		const movieIdProposal = `${this.id}_F${frameIndex}_M${elementIndex}`;
+		const movieId = this.file.getMovieId(movieIdProposal, flElement.guid);
+
+		if (movieId in this.file.knownMovies) {
+			return this.file.knownMovies[movieId];
+		}
+
+		const result = new AnimationMovie(this.file, this, frameIndex, movieId, flElement, elementIndex);
+		this.file.knownMovies[movieId] = result;
+		return result;
+	}
+
 	getSequences() {
 		const generator = new SequenceGenerator();
 
@@ -370,7 +412,9 @@ class AnimationLayer {
 
 	getSymbolFrames(frameIndex) {
 		const result = [];
-		const flFrame = this.flLayer.frames[frameIndex];
+		const flFrame = (this.movieClip)
+			? this.flLayer.frames[0]
+			: this.flLayer.frames[frameIndex];
 
 		if (!flFrame) {
 			// logger.log("invalid frame index", frameIndex, "for layer", this.name);
@@ -378,19 +422,19 @@ class AnimationLayer {
 		}
 
 		flFrame.elements.forEach((flElement, elementIndex) => {
+			if (elementIsExternal(flElement)) {
+				return;
+			}
+
 			if (!elementHasFrames(flElement)) {
-				if (flElement.elementType == "shape") {
-					// cache the element
-					this.getShapeFromFlElement(frameIndex, elementIndex, flElement);	
-				}
-				
+				this.getShapeFromFlElement(frameIndex, elementIndex, flElement);
 				return;
 			}
 
 			const symbol = this.getSymbolFromFlElement(frameIndex, elementIndex, flElement);
 			symbol.attachName(this.name);
 
-			const symbolDisplayIndex = getSymbolDisplayIndex(flFrame, frameIndex, flElement);
+			const symbolDisplayIndex = this.getSymbolDisplayIndex(flFrame, frameIndex, flElement);
 			const symbolFrame = new SymbolFrame(symbol, symbolDisplayIndex, flFrame);
 			symbol.registerFrame(symbolFrame);
 
@@ -399,50 +443,94 @@ class AnimationLayer {
 			
 		return result;
 	}
+
+	getSymbolDisplayIndex = (flFrame, frameIndex, flElement) => {
+		const symbolFrameIter = frameIndex - flFrame.startFrame;
+
+		const symbolLastFrame = (
+			(flElement.lastFrame === -1)
+				? flElement.libraryItem.timeline.frameCount
+				: flElement.lastFrame);
+		let symbolDisplayIndex;
+
+		if (this.movieClip) {
+			const loopSize = flElement.libraryItem.timeline.frameCount
+			const firstFrame = (!flElement.firstFrame)
+				? 0
+				: flElement.firstFrame;
+
+			symbolDisplayIndex = firstFrame + (
+				symbolFrameIter % loopSize);
+		} else if (flElement.loop === "loop") {
+			const loopSize = symbolLastFrame - flElement.firstFrame;
+			symbolDisplayIndex = flElement.firstFrame + (
+				symbolFrameIter % loopSize);
+		} else if (flElement.loop === "single frame" || !flElement.loop) {
+			symbolDisplayIndex = (!flElement.firstFrame)
+				? 0
+				: flElement.firstFrame;
+		} else if (flElement.loop === "play once") {
+			symbolDisplayIndex = Math.floor(
+				flElement.firstFrame + symbolFrameIter, symbolLastFrame-1);
+		} else {
+			logger.log("unknown loop type:", flElement.loop, "in", );
+			logger.log("elementType:", flElement.elementType);
+			logger.log("instanceType:", flElement.instanceType);
+			logger.log("symbolType:", flElement.symbolType);
+			logger.log("effectSymbol:", flElement.effectSymbol);
+			logger.logProperties(flElement);
+		}
+
+		return symbolDisplayIndex;
+
+	}
 }
 
-const elementHasFrames = (flElement) => {
-	// TODO: check if this can be replaced with elementType === "instance"
-
-	if (!('symbolType' in flElement)) {
+const elementIsExternal = (flElement) => {
+	if (flElement.elementType !== "instance") {
 		return false;
 	}
 
-	if (flElement.symbolType === "movie clip") {
+	if (flElement.instanceType === "symbol") {
 		return false;
 	}
 
 	return true;
 }
 
-const getSymbolDisplayIndex = (flFrame, frameIndex, flElement) => {
-	const symbolFrameIter = frameIndex - flFrame.startFrame;
-	const symbolLastFrame = (
-		(flElement.lastFrame === -1)
-			? flElement.libraryItem.timeline.frameCount
-			: flElement.lastFrame);
-	let symbolDisplayIndex;
+const elementHasFrames = (flElement) => {
+	// TODO: check if this can be replaced with elementType === "instance"
+	// return (flElement.elementType === "instance");
 
-	if (flElement.loop === "single frame" || !flElement.loop) {
-		symbolDisplayIndex = flElement.firstFrame;
-	} else if (flElement.loop === "play once") {
-		symbolDisplayIndex = Math.floor(
-			flElement.firstFrame + symbolFrameIter, symbolLastFrame-1);
-	} else if (flElement.loop === "loop") {
-		symbolDisplayIndex = flElement.firstFrame + (
-			symbolFrameIter % (symbolLastFrame - flElement.firstFrame));
-	} else {
-		logger.log("unknown loop type:", flElement.loop, "in", );
-		logger.log("elementType:", flElement.elementType);
-		logger.log("instanceType:", flElement.instanceType);
-		logger.log("symbolType:", flElement.symbolType);
-		logger.log("effectSymbol:", flElement.effectSymbol);
-		logger.logProperties(flElement);
+	if ('instanceType' in flElement) {
+		if (flElement.instanceType === "symbol") {
+			return true;
+		}
 	}
 
-	return symbolDisplayIndex;
+	if (!('symbolType' in flElement)) {
+		return false;
+	}
 
+	return true;
 }
+
+const elementIsMovieClip = (flElement) => {
+	if (flElement.elementType !== "instance") {
+		return false;
+	}
+
+	if (flElement.instanceType !== "symbol") {
+		return false;
+	}
+
+	if (flElement.symbolType !== "movie clip") {
+		return false;
+	}
+
+	return true;
+}
+
 
 class ArrayMaps {
 	constructor() {
@@ -624,6 +712,148 @@ export class SymbolExporter {
 		}
 	}
 
+	debug() {
+		let pendingConversions = Object.keys(this.animationFile.knownShapes);
+		let total = pendingConversions.length;
+
+		logger.log("total:", total);
+
+		// pendingConversions.forEach((x) => logger.log(x));
+	}
+
+	_dumpShapeSpritesheetFromLibrary(animationLibrary, tempAssetDoc, pendingConversions, packer, newNames) {
+		const tempAnimationFile = new AnimationFile(tempAssetDoc);
+		const midX = tempAssetDoc.width / 2;
+		const midY = tempAssetDoc.height / 2;
+
+		let completed = Object.keys(newNames).length;
+		let newlyCompleted = null;
+		let failedConversions = [];
+		const total = pendingConversions.length;
+
+		const getAssetFromTempAssetDoc = (assetName) => {
+			const index = tempAssetDoc.library.findItemIndex(newNames[assetName]);
+			return tempAssetDoc.library.items[index];
+		}
+
+		while(newlyCompleted !== 0) {
+			newlyCompleted = 0;
+			failedConversions = [];
+
+			pendingConversions.forEach((shapeName) => {
+				if (shapeName in newNames) {
+					return;
+				}
+
+				const shape = this.animationFile.knownShapes[shapeName];
+				const parentSymbol = shape.layer.symbol;
+
+				if (!parentSymbol) {
+					// can't handle orphaned shapes this way
+					return;
+				}
+
+				try {
+					logger.log("converting " + shapeName + ` ${completed} / ${total}`);
+					tempAssetDoc.addItem({ x:midX, y:midY }, parentSymbol.flSymbol);
+					
+					// unlock the symbol
+					const flLayer = tempAssetDoc.getTimeline().layers[0];
+					const flElement = flLayer.frames[0].elements[0];
+					flLayer.locked = false;
+					flLayer.visible = true;
+					flLayer.layerType = "normal";
+					
+					// enter the symbol
+					flElement.selected = true
+					tempAssetDoc.enterEditMode("inPlace");
+
+					try {
+						// select the shape
+						shape.refreshFlObjects(tempAssetDoc);
+						shape.select(tempAssetDoc);
+
+						// convert the shape
+						const flShape = shape.flElement;
+						const width = flShape.width;
+						const height = flShape.height;
+						const flSymbol = tempAssetDoc.convertToSymbol("graphic", shapeName, "center");
+
+						// add the shape to the packer
+						newNames[shapeName] = flSymbol.name;
+						packer.addImage(() => getAssetFromTempAssetDoc(shapeName), shape, width, height);
+						
+						newlyCompleted += 1;
+						completed += 1;
+					} finally {
+						// go back to a clear document
+						tempAssetDoc.exitEditMode();
+						tempAssetDoc.deleteSelection();
+					}
+					
+				} catch(err) {
+					logger.log("delaying conversion for " + shapeName);
+					logger.log(err);
+				}
+			});
+		}
+
+		return failedConversions;
+	}
+
+	_dumpShapeSpritesheetFromDocument(animationDoc, pendingConversions, packer, newNames) {
+		let completed = Object.keys(newNames).length;
+		let newlyCompleted = null;
+		let failedConversions = [];
+		const total = pendingConversions.length;
+
+
+		const getAssetFromAnimationDoc = (assetName) => {
+			const index = animationDoc.library.findItemIndex(newNames[assetName]);
+			return animationDoc.library.items[index];
+		}
+
+		while(newlyCompleted !== 0) {
+			newlyCompleted = 0;
+			failedConversions = [];
+
+			pendingConversions.forEach((shapeName) => {
+				if (shapeName in newNames) {
+					return;
+				}
+
+				try {
+					logger.log("converting " + shapeName + ` ${completed} / ${total}`);
+					const shape = this.animationFile.knownShapes[shapeName];
+					
+					// select the shape
+					this.animationFile.selectElement(shape, (x) => null);
+					// 	(x) => x.matrix = {
+					// 	a: 1, b: 0, c: 1, d: 0, tx: 0, ty: 0
+					// });
+
+					// convert it to a symbol
+					const flShape = shape.flElement;
+					const width = flShape.width;
+					const height = flShape.height;
+					const flSymbol = animationDoc.convertToSymbol("graphic", shapeName, "center");
+					
+					// add it to the packer
+					newNames[shapeName] = flSymbol.name;
+					packer.addImage(() => getAssetFromAnimationDoc(shapeName), shape, width, height);
+					
+					completed += 1;
+					newlyCompleted += 1;
+				} catch(err) {
+					logger.log("delaying conversion for " + shapeName);
+					logger.log(err);
+				}
+			});
+		}
+
+		return failedConversions;
+	}
+
 	dumpShapeSpritesheet(folderPath) {
 		const shapeNames = [];
 		const animationDoc = fl.getDocumentDOM();
@@ -633,113 +863,20 @@ export class SymbolExporter {
 
 		// convert all shapes to symbols
 		let pendingConversions = Object.keys(this.animationFile.knownShapes);
-		let lastPendingCount = pendingConversions.length;
-		let nextPendingCount = 0;
-		let completed = 0;
-		let total = pendingConversions.length;
 		let newNames = {};
+		let tempAssetDoc = fl.createDocument("timeline");
 
-		const getAssetFromAnimationDoc = (assetName) => {
-			const index = animationDoc.library.findItemIndex(newNames[assetName]);
-			return animationDoc.library.items[index];
-		}
-		
+		this._dumpShapeSpritesheetFromLibrary(animationLibrary, tempAssetDoc, pendingConversions, packer, newNames);
+		this._dumpShapeSpritesheetFromDocument(animationDoc, pendingConversions, packer, newNames);
 
-		while(nextPendingCount < lastPendingCount) {
-			lastPendingCount = pendingConversions.length;
-			nextPendingCount = 0;
-			let failedConversions = [];
-
-			pendingConversions.forEach((shapeName) => {
-				// collect all failing items, copy to another sheet's timeline, and try again
-				try {
-					logger.log("converting " + shapeName + ` ${completed} / ${total}`);
-					const shape = this.animationFile.knownShapes[shapeName];
-					this.animationFile.selectElement(shape);
-
-					const flShape = shape.flElement;
-					const width = flShape.width;
-					const height = flShape.height;
-					const flSymbol = animationDoc.convertToSymbol("graphic", shapeName, "center");
-					newNames[shapeName] = flSymbol.name;
-					packer.addImage(() => getAssetFromAnimationDoc(shapeName), shape, width, height);
-					completed += 1;
-				} catch(err) {
-					logger.log("delaying conversion for " + shapeName);
-					failedConversions.push(shapeName);
-					nextPendingCount += 1;
-				}
-			});	
-
-			pendingConversions = failedConversions;
-			nextPendingCount = pendingConversions.length;
-		}
-
-		let tempAssetDoc;
-
-		if (pendingConversions.length) {
-			logger.log("need to convert " + pendingConversions.length + " shapes through... other means");
-			tempAssetDoc = fl.createDocument("timeline");
-			const tempAnimationFile = new AnimationFile(tempAssetDoc);
-			const midX = tempAssetDoc.width / 2;
-			const midY = tempAssetDoc.height / 2;
-			const failedConversions = [];
-
-			const getAssetFromTempAssetDoc = (assetName) => {
-
-				const index = tempAssetDoc.library.findItemIndex(newNames[assetName]);
-				return tempAssetDoc.library.items[index];
+		logger.log("--- failed conversions ---");
+		pendingConversions.forEach((shapeName) => {
+			if (shapeName in newNames) {
+				return;
 			}
-
-			pendingConversions.forEach((shapeName) => {
-				const shape = this.animationFile.knownShapes[shapeName];
-				const parentSymbol = shape.layer.symbol;
-
-				if (!parentSymbol) {
-					logger.log("cannot convert " + shapeName + "... this needs to be done manually");
-					return;
-				}
-
-				try {
-					logger.log("converting " + shapeName + ` ${completed} / ${total}`);
-
-					tempAssetDoc.addItem({ x:midX, y:midY }, parentSymbol.flSymbol);
-					
-					const flElement = tempAssetDoc.getTimeline().layers[0].frames[0].elements[0];
-					flElement.selected = true
-					tempAssetDoc.enterEditMode("inPlace");
-
-					try {
-						shape.refreshFlObjects(tempAssetDoc);
-						shape.select(tempAssetDoc);
-
-						const flShape = shape.flElement;
-						const width = flShape.width;
-						const height = flShape.height;
-						const flSymbol = tempAssetDoc.convertToSymbol("graphic", shapeName, "center");
-						newNames[shapeName] = flSymbol.name;
-						packer.addImage(() => getAssetFromTempAssetDoc(shapeName), shape, width, height);
-						completed += 1;
-					} finally {
-						tempAssetDoc.exitEditMode();
-						tempAssetDoc.deleteSelection();
-					}
-					
-				} catch(err) {
-					logger.log("failed to convert " + shapeName);
-					logger.log(err);
-					failedConversions.push(shapeName);
-				}
-			});
-
-			if (failedConversions.length) {
-				logger.log("--- failed conversions ---");
-				failedConversions.forEach((x) => logger.log("x: " + x));
-				logger.log("--- ---");	
-			}
-			
-		}
-
+			logger.log("failed: ", shapeName);
+		});
+		logger.log("--- ---");	
 
 		const shapeDoc = fl.createDocument("timeline");
 		shapeDoc.width = 8192;
@@ -784,8 +921,11 @@ export class SymbolExporter {
 						'svgprefix': shapeItem.name,
 						'x': position.x(),
 						'y': position.y(),
+						'width': position.width(),
+						'height': position.height(),
+						'transformX': image.shape.transformX,
+						'transformY': image.shape.transformY,
 						'applyscale': image.applyScale
-						
 					})
 				}
 			});
@@ -794,14 +934,13 @@ export class SymbolExporter {
 		})
 
 		logger.log("done");
-		logger.log(JSON);
 		FLfile.write(`file:///${folderPath}/spritemap.json`, JSON.stringify(spritemap, null, 4));
 
 		if (tempAssetDoc) {
-			fl.closeDocument(tempAssetDoc, false);
+			// fl.closeDocument(tempAssetDoc, false);
 		}
 
-		fl.closeDocument(shapeDoc, false);
+		// fl.closeDocument(shapeDoc, false);
 	}
 }
 

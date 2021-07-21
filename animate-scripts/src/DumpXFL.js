@@ -8,6 +8,6 @@ const outputFile = "%outputFile";
 synthrunner((logger) => {
 	fl.closeAll()
 	document = fl.openDocument(`file:///${sourceFile}`);
-	const output = fl.getDocumentDOM().saveAsCopy(`file:///${outputFile}`);
+	const output = fl.getDocumentDOM().saveAsCopy(`file:///${outputFile}.xfl`);
 	fl.closeDocument(document, false);	
 });
