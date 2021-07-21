@@ -14,7 +14,7 @@ var outputFile = "%outputFile";
 synthrunner_js_1["default"](function (logger) {
     fl.closeAll();
     document = fl.openDocument("file:///" + sourceFile);
-    var output = fl.getDocumentDOM().saveAsCopy("file:///" + outputFile);
+    var output = fl.getDocumentDOM().saveAsCopy("file:///" + outputFile + ".xfl");
     fl.closeDocument(document, false);
 });
 

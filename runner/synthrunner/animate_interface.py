@@ -194,3 +194,9 @@ class AnimateInterface:
             "./animate-scripts-dist/TestFile.jsfl",
             sourceFile=os.path.realpath(sourceFile).replace("\\", "/"),
         )
+
+    def debug(self, sourceFile):
+        return self.run_script(
+            "./animate-scripts-dist/Debug.jsfl",
+            sourceFile=os.path.realpath(sourceFile).replace("\\", "/"),
+        )

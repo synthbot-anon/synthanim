@@ -11,6 +11,7 @@ __webpack_unused_export__ = true;
 var synthrunner_js_1 = __webpack_require__(674);
 var AnimationTree_js_1 = __webpack_require__(133);
 var sourceFile = "%sourceFile";
+var shapes = JSON.parse("%shapes");
 var outputDir = "%outputDir";
 // .fastForwardUntil("MLP922_175A.fla")
 synthrunner_js_1["default"](function (logger) {
@@ -19,7 +20,7 @@ synthrunner_js_1["default"](function (logger) {
     var animationFile = AnimationTree_js_1.getAnimationFile();
     var exporter = new AnimationTree_js_1.SymbolExporter();
     exporter.addAnimationFile(animationFile);
-    exporter.dumpShapeSpritesheet(outputDir);
+    exporter.dumpShapeSpritesheet(outputDir + "/spritemaps");
     fl.closeDocument(document, false);
 });
 
@@ -87,6 +88,8 @@ var AnimationFile = /** @class */ (function () {
         this.symbolIdFromGuid = {};
         this.knownShapes = {};
         this.shapeIdFromGuid = {};
+        this.knownMovies = {};
+        this.movieIdFromGuid = {};
         this.knownLayers = {};
         this.rootLayers = this.rootTimeline.layers.map(function (x, i) {
             var layerId = "L" + i;
@@ -111,7 +114,14 @@ var AnimationFile = /** @class */ (function () {
         this.shapeIdFromGuid[guid] = proposal;
         return proposal;
     };
-    AnimationFile.prototype.enterElement = function (animationElement) {
+    AnimationFile.prototype.getMovieId = function (proposal, guid) {
+        if (guid in this.movieIdFromGuid) {
+            return this.movieIdFromGuid[guid];
+        }
+        this.movieIdFromGuid[guid] = proposal;
+        return proposal;
+    };
+    AnimationFile.prototype.enterElement = function (animationElement, fn) {
         var commonAncestor = null;
         var currentElementToAncestor = [];
         var currentElement = animationElement;
@@ -135,6 +145,7 @@ var AnimationFile = /** @class */ (function () {
         // go down to the next shape
         while (currentElementToAncestor.length) {
             var nextElement = currentElementToAncestor.pop();
+            fn(nextElement);
             nextElement.refreshFlObjects();
             nextElement.select();
             // nextElement.layer.flLayer.locked = false;
@@ -149,9 +160,10 @@ var AnimationFile = /** @class */ (function () {
             this.visitingAncestors[nextElement.id] = nextElement;
         }
     };
-    AnimationFile.prototype.selectElement = function (animationElement) {
+    AnimationFile.prototype.selectElement = function (animationElement, fn) {
         var parent = animationElement.layer.symbol;
-        this.enterElement(parent);
+        this.enterElement(parent, fn);
+        fn(animationElement);
         animationElement.refreshFlObjects();
         animationElement.select();
         // const shapeTimeline = this.flDocument.getTimeline();
@@ -197,6 +209,8 @@ var AnimationElement = /** @class */ (function () {
         (doc || this.file.flDocument).getTimeline().currentFrame = this.frameIndex;
         this.layer.flLayer.locked = false;
         this.layer.flLayer.visible = true;
+        this.layer.flLayer.layerType = "normal";
+        this.file.flDocument.livePreview = true;
         (doc || this.file.flDocument).selectNone();
         this.flElement.selected = true;
         // this.file.flDocument.selection = [this.flElement];
@@ -215,9 +229,19 @@ var AnimationElement = /** @class */ (function () {
 var AnimationShape = /** @class */ (function (_super) {
     __extends(AnimationShape, _super);
     function AnimationShape(file, layer, frameIndex, shapeId, flElement, elementIndex) {
-        return _super.call(this, file, layer, frameIndex, shapeId, flElement, elementIndex) || this;
+        var _this = _super.call(this, file, layer, frameIndex, shapeId, flElement, elementIndex) || this;
+        _this.transformX = flElement.transformX;
+        _this.transformY = flElement.transformY;
+        return _this;
     }
     return AnimationShape;
+}(AnimationElement));
+var AnimationMovie = /** @class */ (function (_super) {
+    __extends(AnimationMovie, _super);
+    function AnimationMovie(file, layer, frameIndex, movieId, flElement, elementIndex) {
+        return _super.call(this, file, layer, frameIndex, movieId, flElement, elementIndex) || this;
+    }
+    return AnimationMovie;
 }(AnimationElement));
 var AnimationSymbol = /** @class */ (function (_super) {
     __extends(AnimationSymbol, _super);
@@ -227,6 +251,7 @@ var AnimationSymbol = /** @class */ (function (_super) {
         _this.timeline = flElement.libraryItem.timeline;
         _this.names = {};
         _this.frames = [];
+        _this.movieClip = elementIsMovieClip(flElement);
         return _this;
     }
     AnimationSymbol.prototype.attachName = function (name) {
@@ -241,6 +266,7 @@ var AnimationSymbol = /** @class */ (function (_super) {
             return this.file.knownLayers[layerId];
         }
         var result = new AnimationLayer(this.file, this, layerId, flLayer, layerIndex);
+        result.movieClip = this.movieClip;
         this.file.knownLayers[layerId] = result;
         return result;
     };
@@ -275,6 +301,7 @@ var SymbolFrame = /** @class */ (function () {
                     pending.push.apply(pending, layerFrames);
                 }
             });
+            inSymbol1 = false;
         };
         while (pending.length !== 0) {
             _loop_1();
@@ -332,12 +359,49 @@ var SequenceGenerator = /** @class */ (function () {
 }());
 var AnimationLayer = /** @class */ (function () {
     function AnimationLayer(file, symbol, layerId, flLayer, layerIndex) {
+        var _this = this;
+        this.getSymbolDisplayIndex = function (flFrame, frameIndex, flElement) {
+            var symbolFrameIter = frameIndex - flFrame.startFrame;
+            var symbolLastFrame = ((flElement.lastFrame === -1)
+                ? flElement.libraryItem.timeline.frameCount
+                : flElement.lastFrame);
+            var symbolDisplayIndex;
+            if (_this.movieClip) {
+                var loopSize = flElement.libraryItem.timeline.frameCount;
+                var firstFrame = (!flElement.firstFrame)
+                    ? 0
+                    : flElement.firstFrame;
+                symbolDisplayIndex = firstFrame + (symbolFrameIter % loopSize);
+            }
+            else if (flElement.loop === "loop") {
+                var loopSize = symbolLastFrame - flElement.firstFrame;
+                symbolDisplayIndex = flElement.firstFrame + (symbolFrameIter % loopSize);
+            }
+            else if (flElement.loop === "single frame" || !flElement.loop) {
+                symbolDisplayIndex = (!flElement.firstFrame)
+                    ? 0
+                    : flElement.firstFrame;
+            }
+            else if (flElement.loop === "play once") {
+                symbolDisplayIndex = Math.floor(flElement.firstFrame + symbolFrameIter, symbolLastFrame - 1);
+            }
+            else {
+                synthrunner_js_1.logger.log("unknown loop type:", flElement.loop, "in");
+                synthrunner_js_1.logger.log("elementType:", flElement.elementType);
+                synthrunner_js_1.logger.log("instanceType:", flElement.instanceType);
+                synthrunner_js_1.logger.log("symbolType:", flElement.symbolType);
+                synthrunner_js_1.logger.log("effectSymbol:", flElement.effectSymbol);
+                synthrunner_js_1.logger.logProperties(flElement);
+            }
+            return symbolDisplayIndex;
+        };
         this.file = file;
         this.symbol = symbol;
         this.id = layerId;
         this.flLayer = flLayer;
         this.name = flLayer.name;
         this.layerIndex = layerIndex;
+        this.movieClip = false;
     }
     AnimationLayer.prototype.getSymbolFromFlElement = function (frameIndex, elementIndex, flElement) {
         var symbolIdProposal = flElement.libraryItem.name;
@@ -359,6 +423,16 @@ var AnimationLayer = /** @class */ (function () {
         this.file.knownShapes[shapeId] = result;
         return result;
     };
+    AnimationLayer.prototype.getMovieFlElement = function (frameIndex, elementIndex, flElement) {
+        var movieIdProposal = this.id + "_F" + frameIndex + "_M" + elementIndex;
+        var movieId = this.file.getMovieId(movieIdProposal, flElement.guid);
+        if (movieId in this.file.knownMovies) {
+            return this.file.knownMovies[movieId];
+        }
+        var result = new AnimationMovie(this.file, this, frameIndex, movieId, flElement, elementIndex);
+        this.file.knownMovies[movieId] = result;
+        return result;
+    };
     AnimationLayer.prototype.getSequences = function () {
         var _this = this;
         var generator = new SequenceGenerator();
@@ -374,22 +448,24 @@ var AnimationLayer = /** @class */ (function () {
     AnimationLayer.prototype.getSymbolFrames = function (frameIndex) {
         var _this = this;
         var result = [];
-        var flFrame = this.flLayer.frames[frameIndex];
+        var flFrame = (this.movieClip)
+            ? this.flLayer.frames[0]
+            : this.flLayer.frames[frameIndex];
         if (!flFrame) {
             // logger.log("invalid frame index", frameIndex, "for layer", this.name);
             return null;
         }
         flFrame.elements.forEach(function (flElement, elementIndex) {
+            if (elementIsExternal(flElement)) {
+                return;
+            }
             if (!elementHasFrames(flElement)) {
-                if (flElement.elementType == "shape") {
-                    // cache the element
-                    _this.getShapeFromFlElement(frameIndex, elementIndex, flElement);
-                }
+                _this.getShapeFromFlElement(frameIndex, elementIndex, flElement);
                 return;
             }
             var symbol = _this.getSymbolFromFlElement(frameIndex, elementIndex, flElement);
             symbol.attachName(_this.name);
-            var symbolDisplayIndex = getSymbolDisplayIndex(flFrame, frameIndex, flElement);
+            var symbolDisplayIndex = _this.getSymbolDisplayIndex(flFrame, frameIndex, flElement);
             var symbolFrame = new SymbolFrame(symbol, symbolDisplayIndex, flFrame);
             symbol.registerFrame(symbolFrame);
             result.push(symbolFrame);
@@ -398,40 +474,39 @@ var AnimationLayer = /** @class */ (function () {
     };
     return AnimationLayer;
 }());
-var elementHasFrames = function (flElement) {
-    // TODO: check if this can be replaced with elementType === "instance"
-    if (!('symbolType' in flElement)) {
+var elementIsExternal = function (flElement) {
+    if (flElement.elementType !== "instance") {
         return false;
     }
-    if (flElement.symbolType === "movie clip") {
+    if (flElement.instanceType === "symbol") {
         return false;
     }
     return true;
 };
-var getSymbolDisplayIndex = function (flFrame, frameIndex, flElement) {
-    var symbolFrameIter = frameIndex - flFrame.startFrame;
-    var symbolLastFrame = ((flElement.lastFrame === -1)
-        ? flElement.libraryItem.timeline.frameCount
-        : flElement.lastFrame);
-    var symbolDisplayIndex;
-    if (flElement.loop === "single frame" || !flElement.loop) {
-        symbolDisplayIndex = flElement.firstFrame;
+var elementHasFrames = function (flElement) {
+    // TODO: check if this can be replaced with elementType === "instance"
+    // return (flElement.elementType === "instance");
+    if ('instanceType' in flElement) {
+        if (flElement.instanceType === "symbol") {
+            return true;
+        }
     }
-    else if (flElement.loop === "play once") {
-        symbolDisplayIndex = Math.floor(flElement.firstFrame + symbolFrameIter, symbolLastFrame - 1);
+    if (!('symbolType' in flElement)) {
+        return false;
     }
-    else if (flElement.loop === "loop") {
-        symbolDisplayIndex = flElement.firstFrame + (symbolFrameIter % (symbolLastFrame - flElement.firstFrame));
+    return true;
+};
+var elementIsMovieClip = function (flElement) {
+    if (flElement.elementType !== "instance") {
+        return false;
     }
-    else {
-        synthrunner_js_1.logger.log("unknown loop type:", flElement.loop, "in");
-        synthrunner_js_1.logger.log("elementType:", flElement.elementType);
-        synthrunner_js_1.logger.log("instanceType:", flElement.instanceType);
-        synthrunner_js_1.logger.log("symbolType:", flElement.symbolType);
-        synthrunner_js_1.logger.log("effectSymbol:", flElement.effectSymbol);
-        synthrunner_js_1.logger.logProperties(flElement);
+    if (flElement.instanceType !== "symbol") {
+        return false;
     }
-    return symbolDisplayIndex;
+    if (flElement.symbolType !== "movie clip") {
+        return false;
+    }
+    return true;
 };
 var ArrayMaps = /** @class */ (function () {
     function ArrayMaps() {
@@ -543,7 +618,7 @@ var SymbolExporter = /** @class */ (function () {
             symbol.flSymbol.exportToPNGSequence(spritePath, frameIndex + 1, frameIndex + 1);
         }
         catch (err) {
-            synthrunner_js_1.logger.log("failed to convert", symbol.id);
+            synthrunner_js_1.logger.log("failed to convert item: ", symbol.id);
         }
         var framePath = getFrameFilename(spritePath, frameIndex + 2);
         FLfile.remove(framePath);
@@ -584,8 +659,124 @@ var SymbolExporter = /** @class */ (function () {
             this.dumpSymbolSequences(symbol, frames, folder);
         }
     };
-    SymbolExporter.prototype.dumpShapeSpritesheet = function (folderPath) {
+    SymbolExporter.prototype.debug = function () {
+        var pendingConversions = Object.keys(this.animationFile.knownShapes);
+        var total = pendingConversions.length;
+        synthrunner_js_1.logger.log("total:", total);
+        // pendingConversions.forEach((x) => logger.log(x));
+    };
+    SymbolExporter.prototype._dumpShapeSpritesheetFromLibrary = function (animationLibrary, tempAssetDoc, pendingConversions, packer, newNames) {
         var _this = this;
+        var tempAnimationFile = new AnimationFile(tempAssetDoc);
+        var midX = tempAssetDoc.width / 2;
+        var midY = tempAssetDoc.height / 2;
+        var completed = Object.keys(newNames).length;
+        var newlyCompleted = null;
+        var failedConversions = [];
+        var total = pendingConversions.length;
+        var getAssetFromTempAssetDoc = function (assetName) {
+            var index = tempAssetDoc.library.findItemIndex(newNames[assetName]);
+            return tempAssetDoc.library.items[index];
+        };
+        while (newlyCompleted !== 0) {
+            newlyCompleted = 0;
+            failedConversions = [];
+            pendingConversions.forEach(function (shapeName) {
+                if (shapeName in newNames) {
+                    return;
+                }
+                var shape = _this.animationFile.knownShapes[shapeName];
+                var parentSymbol = shape.layer.symbol;
+                if (!parentSymbol) {
+                    // can't handle orphaned shapes this way
+                    return;
+                }
+                try {
+                    synthrunner_js_1.logger.log("converting " + shapeName + (" " + completed + " / " + total));
+                    tempAssetDoc.addItem({ x: midX, y: midY }, parentSymbol.flSymbol);
+                    // unlock the symbol
+                    var flLayer = tempAssetDoc.getTimeline().layers[0];
+                    var flElement = flLayer.frames[0].elements[0];
+                    flLayer.locked = false;
+                    flLayer.visible = true;
+                    flLayer.layerType = "normal";
+                    // enter the symbol
+                    flElement.selected = true;
+                    tempAssetDoc.enterEditMode("inPlace");
+                    try {
+                        // select the shape
+                        shape.refreshFlObjects(tempAssetDoc);
+                        shape.select(tempAssetDoc);
+                        // convert the shape
+                        var flShape = shape.flElement;
+                        var width = flShape.width;
+                        var height = flShape.height;
+                        var flSymbol = tempAssetDoc.convertToSymbol("graphic", shapeName, "center");
+                        // add the shape to the packer
+                        newNames[shapeName] = flSymbol.name;
+                        packer.addImage(function () { return getAssetFromTempAssetDoc(shapeName); }, shape, width, height);
+                        newlyCompleted += 1;
+                        completed += 1;
+                    }
+                    finally {
+                        // go back to a clear document
+                        tempAssetDoc.exitEditMode();
+                        tempAssetDoc.deleteSelection();
+                    }
+                }
+                catch (err) {
+                    synthrunner_js_1.logger.log("delaying conversion for " + shapeName);
+                    synthrunner_js_1.logger.log(err);
+                }
+            });
+        }
+        return failedConversions;
+    };
+    SymbolExporter.prototype._dumpShapeSpritesheetFromDocument = function (animationDoc, pendingConversions, packer, newNames) {
+        var _this = this;
+        var completed = Object.keys(newNames).length;
+        var newlyCompleted = null;
+        var failedConversions = [];
+        var total = pendingConversions.length;
+        var getAssetFromAnimationDoc = function (assetName) {
+            var index = animationDoc.library.findItemIndex(newNames[assetName]);
+            return animationDoc.library.items[index];
+        };
+        while (newlyCompleted !== 0) {
+            newlyCompleted = 0;
+            failedConversions = [];
+            pendingConversions.forEach(function (shapeName) {
+                if (shapeName in newNames) {
+                    return;
+                }
+                try {
+                    synthrunner_js_1.logger.log("converting " + shapeName + (" " + completed + " / " + total));
+                    var shape = _this.animationFile.knownShapes[shapeName];
+                    // select the shape
+                    _this.animationFile.selectElement(shape, function (x) { return null; });
+                    // 	(x) => x.matrix = {
+                    // 	a: 1, b: 0, c: 1, d: 0, tx: 0, ty: 0
+                    // });
+                    // convert it to a symbol
+                    var flShape = shape.flElement;
+                    var width = flShape.width;
+                    var height = flShape.height;
+                    var flSymbol = animationDoc.convertToSymbol("graphic", shapeName, "center");
+                    // add it to the packer
+                    newNames[shapeName] = flSymbol.name;
+                    packer.addImage(function () { return getAssetFromAnimationDoc(shapeName); }, shape, width, height);
+                    completed += 1;
+                    newlyCompleted += 1;
+                }
+                catch (err) {
+                    synthrunner_js_1.logger.log("delaying conversion for " + shapeName);
+                    synthrunner_js_1.logger.log(err);
+                }
+            });
+        }
+        return failedConversions;
+    };
+    SymbolExporter.prototype.dumpShapeSpritesheet = function (folderPath) {
         var shapeNames = [];
         var animationDoc = fl.getDocumentDOM();
         var animationLibrary = animationDoc.library;
@@ -593,98 +784,18 @@ var SymbolExporter = /** @class */ (function () {
         var count = 0;
         // convert all shapes to symbols
         var pendingConversions = Object.keys(this.animationFile.knownShapes);
-        var lastPendingCount = pendingConversions.length;
-        var nextPendingCount = 0;
-        var completed = 0;
-        var total = pendingConversions.length;
         var newNames = {};
-        var getAssetFromAnimationDoc = function (assetName) {
-            var index = animationDoc.library.findItemIndex(newNames[assetName]);
-            return animationDoc.library.items[index];
-        };
-        var _loop_2 = function () {
-            lastPendingCount = pendingConversions.length;
-            nextPendingCount = 0;
-            var failedConversions = [];
-            pendingConversions.forEach(function (shapeName) {
-                // collect all failing items, copy to another sheet's timeline, and try again
-                try {
-                    synthrunner_js_1.logger.log("converting " + shapeName + (" " + completed + " / " + total));
-                    var shape = _this.animationFile.knownShapes[shapeName];
-                    _this.animationFile.selectElement(shape);
-                    var flShape = shape.flElement;
-                    var width = flShape.width;
-                    var height = flShape.height;
-                    var flSymbol = animationDoc.convertToSymbol("graphic", shapeName, "center");
-                    newNames[shapeName] = flSymbol.name;
-                    packer.addImage(function () { return getAssetFromAnimationDoc(shapeName); }, shape, width, height);
-                    completed += 1;
-                }
-                catch (err) {
-                    synthrunner_js_1.logger.log("delaying conversion for " + shapeName);
-                    failedConversions.push(shapeName);
-                    nextPendingCount += 1;
-                }
-            });
-            pendingConversions = failedConversions;
-            nextPendingCount = pendingConversions.length;
-        };
-        while (nextPendingCount < lastPendingCount) {
-            _loop_2();
-        }
-        var tempAssetDoc;
-        if (pendingConversions.length) {
-            synthrunner_js_1.logger.log("need to convert " + pendingConversions.length + " shapes through... other means");
-            tempAssetDoc = fl.createDocument("timeline");
-            var tempAnimationFile = new AnimationFile(tempAssetDoc);
-            var midX_1 = tempAssetDoc.width / 2;
-            var midY_1 = tempAssetDoc.height / 2;
-            var failedConversions_1 = [];
-            var getAssetFromTempAssetDoc_1 = function (assetName) {
-                var index = tempAssetDoc.library.findItemIndex(newNames[assetName]);
-                return tempAssetDoc.library.items[index];
-            };
-            pendingConversions.forEach(function (shapeName) {
-                var shape = _this.animationFile.knownShapes[shapeName];
-                var parentSymbol = shape.layer.symbol;
-                if (!parentSymbol) {
-                    synthrunner_js_1.logger.log("cannot convert " + shapeName + "... this needs to be done manually");
-                    return;
-                }
-                try {
-                    synthrunner_js_1.logger.log("converting " + shapeName + (" " + completed + " / " + total));
-                    tempAssetDoc.addItem({ x: midX_1, y: midY_1 }, parentSymbol.flSymbol);
-                    var flElement = tempAssetDoc.getTimeline().layers[0].frames[0].elements[0];
-                    flElement.selected = true;
-                    tempAssetDoc.enterEditMode("inPlace");
-                    try {
-                        shape.refreshFlObjects(tempAssetDoc);
-                        shape.select(tempAssetDoc);
-                        var flShape = shape.flElement;
-                        var width = flShape.width;
-                        var height = flShape.height;
-                        var flSymbol = tempAssetDoc.convertToSymbol("graphic", shapeName, "center");
-                        newNames[shapeName] = flSymbol.name;
-                        packer.addImage(function () { return getAssetFromTempAssetDoc_1(shapeName); }, shape, width, height);
-                        completed += 1;
-                    }
-                    finally {
-                        tempAssetDoc.exitEditMode();
-                        tempAssetDoc.deleteSelection();
-                    }
-                }
-                catch (err) {
-                    synthrunner_js_1.logger.log("failed to convert " + shapeName);
-                    synthrunner_js_1.logger.log(err);
-                    failedConversions_1.push(shapeName);
-                }
-            });
-            if (failedConversions_1.length) {
-                synthrunner_js_1.logger.log("--- failed conversions ---");
-                failedConversions_1.forEach(function (x) { return synthrunner_js_1.logger.log("x: " + x); });
-                synthrunner_js_1.logger.log("--- ---");
+        var tempAssetDoc = fl.createDocument("timeline");
+        this._dumpShapeSpritesheetFromLibrary(animationLibrary, tempAssetDoc, pendingConversions, packer, newNames);
+        this._dumpShapeSpritesheetFromDocument(animationDoc, pendingConversions, packer, newNames);
+        synthrunner_js_1.logger.log("--- failed conversions ---");
+        pendingConversions.forEach(function (shapeName) {
+            if (shapeName in newNames) {
+                return;
             }
-        }
+            synthrunner_js_1.logger.log("failed: ", shapeName);
+        });
+        synthrunner_js_1.logger.log("--- ---");
         var shapeDoc = fl.createDocument("timeline");
         shapeDoc.width = 8192;
         shapeDoc.height = 8192;
@@ -725,6 +836,10 @@ var SymbolExporter = /** @class */ (function () {
                         'svgprefix': shapeItem.name,
                         'x': position.x(),
                         'y': position.y(),
+                        'width': position.width(),
+                        'height': position.height(),
+                        'transformX': image.shape.transformX,
+                        'transformY': image.shape.transformY,
                         'applyscale': image.applyScale
                     });
                 }
@@ -732,12 +847,11 @@ var SymbolExporter = /** @class */ (function () {
             shapeDoc.exportSVG(imagePath, true, true);
         });
         synthrunner_js_1.logger.log("done");
-        synthrunner_js_1.logger.log(JSON);
         FLfile.write("file:///" + folderPath + "/spritemap.json", JSON.stringify(spritemap, null, 4));
         if (tempAssetDoc) {
-            fl.closeDocument(tempAssetDoc, false);
+            // fl.closeDocument(tempAssetDoc, false);
         }
-        fl.closeDocument(shapeDoc, false);
+        // fl.closeDocument(shapeDoc, false);
     };
     return SymbolExporter;
 }());

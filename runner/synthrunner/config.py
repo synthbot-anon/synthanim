@@ -16,8 +16,12 @@ class SynthConfigParser(configparser.ConfigParser):
 
     def save(self):
         assert self.filename
-        with open(self.filename, "w", encoding=self.encoding) as config_file:
-            super().write(config_file)
+        try:
+            with open(self.filename, "w+", encoding=self.encoding) as config_file:
+                super().write(config_file)
+        except:
+            pass
+        
 
 
 class ConfigArgAction(argparse.Action):

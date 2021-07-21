@@ -1,19 +1,26 @@
+import sys
+sys.path.append('../')
+
 import argparse
 import collections
+import difflib
 from glob import glob
 import os.path
 import re
 import queue
 import shlex
-import sys
+import shutil
 import tempfile
 import time
 import traceback
 import webbrowser
 
+from animationdb import xflsvg
+
 from .config import SynthConfigParser, ConfigArgAction
 from synthrunner import files
 from .i_hate_windows import make_windows_usable
+
 
 def print_deque(x):
     for item in x:
@@ -89,9 +96,135 @@ def convert(args):
 
     for inp in input_files:
         basename = os.path.splitext(os.path.basename(inp))[0]
-        outp = f"{os.path.join(output_path, basename)}"
+        outp = os.path.join(output_path, basename)
         print_deque(animate.convert(sourceFile=inp, outputDir=outp))
 
+        # clear personal data
+        with open(f'{outp}/PublishSettings.xml') as publish_settings:
+            data = publish_settings.read()
+        data = re.sub(r'\\[^\\]*\\AppData', r'\\anonymous\\AppData', data)
+        with open(f'{outp}/PublishSettings.xml', 'w') as publish_settings:
+            publish_settings.write(data)
+
+def dump_shapes(args):
+    animate = files.select_animate(args)
+    input_files = files.select_source(args, [("FLA file", "*.fla"), ("XFL file", "*.xfl")])
+    output_path = files.select_destination(args)
+
+    print_deque(animate.open_animate())
+
+    for inp in input_files:
+        basename = os.path.splitext(os.path.basename(inp))[0]
+        outp = os.path.join(output_path, basename)
+
+        # print_deque(animate.dump_xfl(sourceFile=inp, outputFile=outp))
+
+        # clear personal data
+        with open(f'{outp}/PublishSettings.xml') as publish_settings:
+            data = publish_settings.read()
+        data = re.sub(r'\\[^\\]*\\AppData', r'\\Anonymous\\AppData', data)
+        with open(f'{outp}/PublishSettings.xml', 'w') as publish_settings:
+            publish_settings.write(data)
+
+
+def debug(args):
+    animate = files.select_animate(args)
+    input_files = files.select_source(args, [("FLA file", "*.fla"), ("XFL file", "*.xfl")])
+    
+    print_deque(animate.open_animate())
+
+    for inp in input_files:
+        print_deque(animate.debug(sourceFile=inp))
+
+
+class DataChecker:
+    def __init__(self, value, sensitivity):
+        self.value = value
+        self.sensitivity = sensitivity
+        self.matches = {}
+
+    def _check_string(self, descr, filename, matcher, orig, string):
+        match = matcher.find_longest_match()
+        if match.size == 0:
+            return
+
+        match_str = string[match.b:match.b+match.size]
+
+        ratio = difflib.SequenceMatcher(None, a=orig, b=match_str, autojunk=False).ratio()
+        if ratio < 1.0 - self.sensitivity:
+            return
+
+        print(descr, match_str)
+        self.matches.setdefault(filename, []).append((ratio, match_str))
+
+        
+    def check_string(self, filename, string):
+        literal_checker = difflib.SequenceMatcher(None, a=self.value, b=string, autojunk=False)
+        self._check_string('Literal match:', filename, literal_checker, self.value, string)
+
+        lowercase_nospace_value = re.sub(r'\s', '', self.value.lower())
+        lowercase_nospace = re.sub(r'\s', '', string.lower())
+        lowercase_checker = difflib.SequenceMatcher(None, a=lowercase_nospace_value, b=lowercase_nospace, autojunk=False)
+        self._check_string('Normalized match:', filename, lowercase_checker, lowercase_nospace_value, lowercase_nospace)
+
+    def check_binary(self, filename, data):
+        hex_data = ' '.join('%02x' % x for x in data)
+        hex_value = ' '.join('%02x' % ord(x) for x in self.value)
+        hex_checker = difflib.SequenceMatcher(None, a=hex_value, b=hex_data, autojunk=False)
+        self._check_string('Hex match:', filename, hex_checker, hex_value, hex_data)
+
+    def print_top_matches(self):
+        print(' == Top matches ==')
+        top_per_file = []
+        for filename in self.matches:
+            top_per_file.append([filename, *max(self.matches[filename], key=lambda x: x[0])])
+
+        n = 10
+        last_ratio = None
+
+        for match in sorted(top_per_file, key=lambda x: x[1], reverse=True):
+            ratio = match[1]
+
+            if n == 0 and ratio < last_ratio:
+                break
+
+            print('%.1f%%' % (match[1]*100), 'match', f'({match[2]})', 'in', match[0])
+            if ratio < 1.0 and n > 0:
+                n -= 1
+                last_ratio = ratio
+
+
+def check_data(args):
+    input_dir = files.select_input_folder("Select a folder to check", None)
+    check_str = input('Value to check for (incl. capitals and spaces): ').strip()
+    sensitivity = float(input('Sensitivity (0.0 to 1.0, default 0.5): ').strip() or 0.5)
+    checker = DataChecker(check_str, sensitivity)
+    unchecked = []
+
+    for root, dirs, filenames in os.walk(input_dir):
+        for f in filenames:
+            path = os.path.join(root, f)
+            with open(path) as input_file:
+                # print('=== Checking', path, '===')
+                try:
+                    data = input_file.read()
+                    checker.check_string(path, data)
+                except:
+                    try:
+                        with open(path, 'rb') as input_file:
+                            data = input_file.read()
+                            checker.check_binary(path, data)
+                    except:
+                        unchecked.append(path)
+                        raise
+
+
+
+    checker.print_top_matches()
+    if len(unchecked):
+        print(' == Unable to check these files ==')
+        print('\n'.join(unchecked))
+                
 
 def run_tests(args):
     animate = files.select_animate(args)
@@ -234,6 +367,13 @@ Here are the basic commands:
   - This will ask for an Animation Assets directory, a symbol sample
     image (which you can get from dump-samples), and a destination folder.
     It will dump the animation data for that symbol in texture atlas format.
+  check-data
+  - This will ask for a directory and a value, and it will check the
+    directory for any occurences of that value. This is intended to check
+    for personal data that might have been written to a file. It will check
+    both binary and text files, ignoring case and spaces, partial and
+    complete matches. It will output the top matches, along with any files
+    it's unable to check for whatever reason.
 
 You can add --batch to all of these. When you add, it will ask for folders
 instead of files. For example:
@@ -286,9 +426,19 @@ def main():
     cmd_convert.add_argument("--input", type=str, metavar="file|folder")
     cmd_convert.add_argument("--output", type=str, metavar="folder")
 
-    cmd_setup = subparsers.add_parser("setup")
+    cmd_dump_shapes = subparsers.add_parser("dump-shapes")
+    cmd_dump_shapes.add_argument("--batch", action="store_true")
+    cmd_dump_shapes.add_argument("--input", type=str, metavar="file|folder")
+    cmd_dump_shapes.add_argument("--output", type=str, metavar="folder")
 
+    cmd_debug = subparsers.add_parser("debug")
+    cmd_debug.add_argument("--input", type=str, metavar="file|folder")
+    cmd_debug.add_argument("--batch", action="store_true")
+
+    cmd_setup = subparsers.add_parser("setup")
+    cmd_check_data = subparsers.add_parser("check-data")
     run_tests_parser = subparsers.add_parser("run-tests")
+    
 
     handlers = {
         "setup": setup,
@@ -296,7 +446,10 @@ def main():
         "dump-samples": dump_samples,
         "dump-texture-atlas": dump_texture_atlas,
         "convert": convert,
+        "dump-shapes": dump_shapes,
         "run-tests": run_tests,
+        "check-data": check_data,
+        "debug": debug,
     }
 
     print("""Here are the basic commands:
@@ -318,6 +471,13 @@ def main():
   - This will ask for an Animation Assets directory, a symbol sample
     image (which you can get from dump-samples), and a destination folder.
     It will dump the animation data for that symbol in texture atlas format.
+  check-data
+  - This will ask for a directory and a value, and it will check the
+    directory for any occurences of that value. This is intended to check
+    for personal data that might have been written to a file. It will check
+    both binary and text files, ignoring case and spaces, partial and
+    complete matches. It will output the top matches, along with any files
+    it's unable to check for whatever reason.
 
 You can add --batch to all of these. When you add, it will ask for folders
 instead of files. For example:

@@ -1,70 +1,29 @@
 /******/ (function() { // webpackBootstrap
 /******/ 	var __webpack_modules__ = ({
 
-/***/ 589:
+/***/ 446:
 /***/ (function(__unused_webpack_module, exports, __webpack_require__) {
 
 "use strict";
 var __webpack_unused_export__;
 
 __webpack_unused_export__ = true;
-__webpack_require__(658);
+var synthrunner_js_1 = __webpack_require__(674);
 var AnimationTree_js_1 = __webpack_require__(133);
-logger.tee("C:/Users/synthbot/Desktop/animate_logs.txt");
-logger.trace("--- ---");
-fl.showIdleMessage(false);
-var clipperDir = "C:/Users/synthbot/Desktop/Sorted Animation Assets/1 - FLA/6 - Scenes";
-var outputDir = "C:/Users/synthbot/animation_dump/6 - Scenes";
-var g = {
-    // to resume processing, skip all files by filename before this one
-    fastforwardUntil: "MLP922_067B_2019-01-21_09-41-16.fla",
-};
-var convertDocument = function (sourceFile, destFile) {
+var sourceFile = "%sourceFile";
+var outputDir = "%outputDir";
+// .fastForwardUntil("MLP922_175A.fla")
+synthrunner_js_1["default"](function (logger) {
     document = fl.openDocument("file:///" + sourceFile);
-    var rootLayers = AnimationTree_js_1.getRootLayers();
+    document.currentTimeline = 0;
+    FLfile.remove("file:///" + outputDir);
+    fl.getDocumentDOM().saveAsCopy("file:///" + outputDir + ".xfl");
+    var animationFile = AnimationTree_js_1.getAnimationFile();
     var exporter = new AnimationTree_js_1.SymbolExporter();
-    rootLayers.map(function (rootLayer) {
-        exporter.addSequences(rootLayer.getSequences());
-    });
-    exporter.dumpAllSymbolSamples(destFile);
+    exporter.addAnimationFile(animationFile);
+    exporter.dumpShapeSpritesheet(outputDir + "/spritemaps");
     fl.closeDocument(document, false);
-};
-var convertDirectory = function (sourceDir, destinationDir) {
-    var availableFiles = FLfile.listFolder("file:///" + sourceDir, "files");
-    FLfile.createFolder(destinationDir);
-    for (var _i = 0, availableFiles_1 = availableFiles; _i < availableFiles_1.length; _i++) {
-        var filename = availableFiles_1[_i];
-        if (g.fastforwardUntil) {
-            if (filename != g.fastforwardUntil) {
-                continue;
-            }
-            g.fastforwardUntil = false;
-        }
-        var filenameLower = filename.toLowerCase();
-        if (!filename.endsWith(".fla")) {
-            continue;
-        }
-        var sourceFile = sourceDir + "/" + filename;
-        var destinationFile = destinationDir + "/" + filename;
-        try {
-            logger.trace("creating", destinationFile);
-            convertDocument(sourceFile, destinationFile);
-        }
-        catch (err) {
-            logger.trace("failed to convert", sourceFile);
-        }
-    }
-    var availableDirectories = FLfile.listFolder("file:///" + sourceDir, "directories");
-    for (var _a = 0, availableDirectories_1 = availableDirectories; _a < availableDirectories_1.length; _a++) {
-        var dirname = availableDirectories_1[_a];
-        var newSourceDir = sourceDir + "/" + dirname;
-        var newdestinationDir = destinationDir + "/" + dirname;
-        convertDirectory(newSourceDir, newdestinationDir);
-    }
-};
-fl.closeAll(true);
-convertDirectory(clipperDir, outputDir);
-logger.trace("done");
+});
 
 
 /***/ }),
@@ -2036,7 +1995,7 @@ exports.default = synthrunner = function (fn) {
 /************************************************************************/
 /******/ 	// startup
 /******/ 	// Load entry module
-/******/ 	__webpack_require__(589);
+/******/ 	__webpack_require__(446);
 /******/ 	// This entry module used 'exports' so it can't be inlined
 /******/ })()
 ;
