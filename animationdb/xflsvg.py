@@ -51,16 +51,23 @@ class ShapeRecorder(contextlib.AbstractContextManager):
     def __init__(self):
         super().__init__()
         self.shapes = []
+        self.context = None
 
     def __enter__(self):
         ShapeRecorder.stack.append(self)
+        
         surface = cairo.RecordingSurface(cairo.CONTENT_ALPHA, None)
-        context = cairo.Context(surface)
-        return context
+        self._context = cairo.Context(surface)
+        self.context = self._context.__enter__()
+
+        return self
     
     def __exit__(self, __exc_type, __exc_value, __traceback):
+        context = self.context
+        self.context = None
         ShapeRecorder.stack.pop()
-        return None
+        
+        return context.__exit__(__exc_type, __exc_value, __traceback)
     
     def record(self, loader):
         self.shapes.append(loader)
