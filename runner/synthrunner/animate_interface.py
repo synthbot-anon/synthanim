@@ -189,6 +189,13 @@ class AnimateInterface:
             outputDir=os.path.realpath(outputDir).replace("\\", "/")
         )
 
+    def dump_shapes(self, sourceFile, outputDir):
+        return self.run_script(
+            "./animate-scripts-dist/DumpShapes.jsfl",
+            sourceFile=os.path.realpath(sourceFile).replace("\\", "/"),
+            outputDir=os.path.realpath(outputDir).replace("\\", "/")
+        )
+
     def open_file(self, sourceFile):
         return self.run_script(
             "./animate-scripts-dist/TestFile.jsfl",

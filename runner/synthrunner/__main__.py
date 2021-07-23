@@ -117,7 +117,7 @@ def dump_shapes(args):
         basename = os.path.splitext(os.path.basename(inp))[0]
         outp = os.path.join(output_path, basename)
 
-        # print_deque(animate.dump_xfl(sourceFile=inp, outputFile=outp))
+        print_deque(animate.dump_xfl(sourceFile=inp, outputFile=f'{outp}.xfl'))
 
         # clear personal data
         with open(f'{outp}/PublishSettings.xml') as publish_settings:
@@ -126,15 +126,34 @@ def dump_shapes(args):
         with open(f'{outp}/PublishSettings.xml', 'w') as publish_settings:
             publish_settings.write(data)
 
+        with xflsvg.ShapeRecorder() as recorder:
+            xfl = xflsvg.XflSvg(outp)
+            for shot in xfl.frames.snapshots:
+                shot.render(recorder.context)
+
+            xflmap_json = recorder.to_json()
+
+            shape_xfl_dir = os.path.join(outp, '__ppp_temp')
+            shape_xfl_path = os.path.join(shape_xfl_dir, 'simple.xfl')
+            recorder.to_xfl(shape_xfl_dir)
+
+
+        spritemap_path = os.path.join(outp, 'spritemaps')
+        print_deque(animate.dump_shapes(shape_xfl_path, spritemap_path))
+
+        xflmap_path = os.path.join(spritemap_path, 'xflmap.json')
+        with open(xflmap_path, 'w+') as xflmap:
+            xflmap.write(xflmap_json)
+
+
+
 
 def debug(args):
-    animate = files.select_animate(args)
-    input_files = files.select_source(args, [("FLA file", "*.fla"), ("XFL file", "*.xfl")])
-    
-    print_deque(animate.open_animate())
+    path = r'C:\Users\synthbot\Desktop\berry-dest\dump-test\dump4\second-draft\MLP422_100'
 
-    for inp in input_files:
-        print_deque(animate.debug(sourceFile=inp))
+    with xflsvg.ShapeRecorder() as recorder:
+        xfl = xflsvg.XflSvg(path)
+
 
 
 class DataChecker:

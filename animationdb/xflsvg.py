@@ -18,39 +18,26 @@ by Assets. Assets have a fixed number of layers and fixed duration.
 """
 
 import contextlib
+import copy
 from glob import glob
 import json
 import html
 import os
 import re
+import shutil
 from typing import Sequence
-from xml.etree import ElementTree
 
 from bs4 import BeautifulSoup
 import cairosvg
 import cairocffi as cairo
 
-tabs = 0
-def enter(*s):
-    global tabs
-    # print('--' * tabs, *s)
-    tabs += 1
-
-def exit():
-    global tabs
-    tabs -= 1
-
-_error = False
-def seterror():
-    global _error
-    _error = True
 
 class ShapeRecorder(contextlib.AbstractContextManager):
     stack = []
 
     def __init__(self):
         super().__init__()
-        self.shapes = []
+        self.shapes = set()
         self.context = None
 
     def __enter__(self):
@@ -69,21 +56,61 @@ class ShapeRecorder(contextlib.AbstractContextManager):
         
         return context.__exit__(__exc_type, __exc_value, __traceback)
     
-    def record(self, loader):
-        self.shapes.append(loader)
+    def record(self, loader, element):
+        self.shapes.add((loader, element))
     
     def to_json(self):
-        # TODO: sort by asset, frame
         data = []
-        for sh in self.shapes:
+        for index, record in enumerate(self.shapes):
+            sh, el = record
             data.append({
+                'id': index,
                 'symbol': sh.asset_id,
                 'layer': sh.layer_index,
                 'frame': sh.frame_index,
-                'indexes': sh.path
+                'elementIndexes': sh.path
             })
-        return json.dumps(data)
-    
+
+        return json.dumps(data, indent=4)
+
+    def to_xfl(self, output):
+        os.makedirs(output, exist_ok=True)
+        try:
+            shutil.rmtree(output)
+        except:
+            pass
+
+        template_path = r'C:\Users\synthbot\Desktop\berry-dest\dump-test\dump4\second-draft\simple'
+        shutil.copytree(template_path, output)
+        target_symbol = os.path.join(output, 'LIBRARY/SymbolName.xml')
+        with open(target_symbol) as template:
+            soup = BeautifulSoup(template,'xml')
+
+        base_frame = soup.DOMFrame
+        element_bundle = base_frame.parent
+        soup.DOMFrame.extract()
+
+        for index, data in enumerate(self.shapes):
+            loader, element = data
+            clone = copy.copy(base_frame)
+            clone['index'] = index
+            clone.DOMShape.replace_with(element.xmlnode)
+            element_bundle.append(clone)
+
+        with open(target_symbol, 'w') as output:
+            output.write(str(soup.DOMSymbolItem))
+
+
+width = None
+height = None
+def set_scale(x, y):
+    global width, height
+    width = x
+    height = y
+
+def get_scale():
+    return width, height
+
 
 
 class Snapshot:
@@ -91,6 +118,18 @@ class Snapshot:
         self.owner = None
         self.parent = None
         self.frame_index = -1
+
+    def to_png(self, width, height):
+        output = cairo.ImageSurface(
+            cairo.FORMAT_ARGB32, width, height
+        )
+        with cairo.Context(output) as context:
+            set_scale(width, height)
+            context.translate(width*0.5, height*0.5)
+            self.render(context)
+
+        return output.write_to_png(None)
+
 
 class EmptySnapshot:
     def __init__(self):
@@ -100,7 +139,6 @@ class EmptySnapshot:
         pass
 
 _EMPTY_SVG = '<svg height="1px" width="1px" viewBox="0 0 1 1" />'
-iter = 0
 
 class SVGSnapshot(Snapshot):
     def __init__(self, name, loader):
@@ -114,17 +152,11 @@ class SVGSnapshot(Snapshot):
         self._height = None
 
     @property
-    def png(self):
-        if not self._png:
-            self._png = self.cairo.write_to_png(None)
-        return self._png
-    
-    @property
     def svg(self):
         if self._svg != None:
             return self._svg
         
-        svg = self.loader.load()
+        svg = self.loader.load_sprite()
         if svg == None:
             svg = _EMPTY_SVG
         
@@ -140,24 +172,21 @@ class SVGSnapshot(Snapshot):
         surface = cairosvg.surface.SVGSurface(tree, output=None, dpi=72)
         self._width = surface.width
         self._height = surface.height
-
-        global iter
-        with open(f'/data/shapes/{iter}.svg', 'w') as output:
-            output.write(self.svg)
-        iter += 1
-
         self._surface = surface.cairo
+
         return surface.cairo
 
     def render(self, context):
         if ShapeRecorder.stack:
             for recorder in ShapeRecorder.stack:
-                recorder.record(self.loader)
+                recorder.record(self.loader, self.owner)
             return
 
         context.save()
         surface = self.surface
-        context.translate(-self._width / 2, -self._height / 2)
+        origin = self.loader.load_origin()
+        context.translate(*origin)
+        context.translate(-self._width/2, -self._height/2)
         context.set_source_surface(self.surface)
         context.paint()
         context.restore()
@@ -189,6 +218,7 @@ class TransformedSnapshot(Snapshot):
     def render(self, context):
         self.original.parent = self
         context.save()
+        # x, y = get_scale()
         context.translate(self.origin[0], self.origin[1])
         context.transform(self.matrix)
         self.original.render(context)
@@ -207,11 +237,11 @@ class AnimationObject(Sequence):
         pass
 
 def _get_matrix(xmlnode):
-    outer = xmlnode.find("{*}matrix")
+    outer = xmlnode.matrix
     if outer == None:
         return cairo.Matrix()
     
-    inner = outer.find("{*}Matrix")
+    inner = outer.Matrix
     if inner == None:
         return cairo.Matrix()
     
@@ -227,16 +257,32 @@ def _get_matrix(xmlnode):
 
 
 def _get_origin(xmlnode):
-    outer = xmlnode.find("{*}transformationPoint")
+    outer = xmlnode.transformationPoint
     if outer == None:
         return [0, 0]
     
-    inner = outer.find("{*}Point")
+    inner = outer.Point
     if inner == None:
         return [0, 0]
     
     result = [float(inner.get("x", default=0)), float(inner.get("y", default=0))]
     return result
+
+    # outer = xmlnode.matrix
+    # if outer == None:
+    #     # return cairo.Matrix()
+    #     return [0, 0]
+    
+    # inner = outer.Matrix
+    # if inner == None:
+    #     # return cairo.Matrix()
+    #     return [0, 0]
+    
+    # result = [
+    #     float(inner.get("tx", default=0)),
+    #     float(inner.get("ty", default=0)),
+    # ]
+    # return result
 
 
 
@@ -244,7 +290,6 @@ class Element(AnimationObject):
     def __init__(self, xmlnode):
         super().__init__()
         self.xmlnode = xmlnode
-        matrix = xmlnode.find("{*}matrix")
         self.matrix = _get_matrix(xmlnode)
         self.origin = _get_origin(xmlnode)
     
@@ -259,7 +304,7 @@ class SymbolElement(Element):
     def __init__(self, bundle_context, xmlnode):
         super().__init__(xmlnode)
         self.loop_type = xmlnode.get("loop")
-        self.asset = bundle_context.xflsvg.get_asset(xmlnode.get("libraryItemName"))
+        self.asset = bundle_context.xflsvg.get_safe_asset(xmlnode.get("libraryItemName"))
         self.first_frame = int(xmlnode.get("firstFrame", default=0))
         self.first_frame = min(self.asset.frame_count - 1, self.first_frame)
         self.duration = bundle_context.duration
@@ -291,12 +336,14 @@ class ShapeElement(Element):
         self.layer = bundle_context.layer
         self.duration = bundle_context.duration
         self.path = tuple(path)
-        self.svg_snapshot, self.origin = bundle_context.xflsvg.get_shape(
+        self.svg_snapshot = bundle_context.xflsvg.get_shape(
             bundle_context.asset.id,
             bundle_context.layer.index,
             bundle_context.start_frame_index,
             self.path,
         )
+
+        self.origin = [0, 0]
 
         self.svg_snapshot.owner = self
         self.svg_snapshot.frame_index = 0
@@ -334,13 +381,13 @@ class GroupElement(Element, BundleContext):
         self.path = path
         self.elements = []
 
-        for i, element_xmlnode in enumerate(xmlnode.findall('{*}members/*')):
-            element_type = element_xmlnode.tag
-            if element_type == "{http://ns.adobe.com/xfl/2008/}DOMShape":
+        for i, element_xmlnode in enumerate(xmlnode.members.findChildren(recursive=False)):
+            element_type = element_xmlnode.name
+            if element_type == "DOMShape":
                 element = ShapeElement(self, [*path, i], element_xmlnode,)
-            elif element_type == "{http://ns.adobe.com/xfl/2008/}DOMSymbolInstance":
+            elif element_type == "DOMSymbolInstance":
                 element = SymbolElement(self, element_xmlnode)
-            elif element_type == "{http://ns.adobe.com/xfl/2008/}DOMGroup":
+            elif element_type == "DOMGroup":
                 element = GroupElement(self, [*path, i], element_xmlnode)
             else:
                 element = Element(element_xmlnode)
@@ -380,13 +427,13 @@ class ElementBundle(AnimationObject, BundleContext):
         self.element_index = 0
         self.elements = []
         
-        for i, element_xmlnode in enumerate(xmlnode.findall('{*}elements/*')):
-            element_type = element_xmlnode.tag
-            if element_type == "{http://ns.adobe.com/xfl/2008/}DOMShape":
+        for i, element_xmlnode in enumerate(xmlnode.elements.findChildren(recursive=False)):
+            element_type = element_xmlnode.name
+            if element_type == "DOMShape":
                 element = ShapeElement(self, [i], element_xmlnode,)
-            elif element_type == "{http://ns.adobe.com/xfl/2008/}DOMSymbolInstance":
+            elif element_type == "DOMSymbolInstance":
                 element = SymbolElement(self, element_xmlnode)
-            elif element_type == "{http://ns.adobe.com/xfl/2008/}DOMGroup":
+            elif element_type == "DOMGroup":
                 element = GroupElement(self, [i], element_xmlnode)
             else:
                 element = Element(element_xmlnode)
@@ -438,14 +485,14 @@ class Layer(AnimationObject):
         self.id = id
         self.index = index
         self.xmlnode = xmlnode
-        self.name = xmlnode.get("name")
-        self.visible = xmlnode.get('visible', default=None) != 'false'
+        self.name = xmlnode.get("name", None)
+        self.visible = xmlnode.get('visible', 'true') != 'false'
         self.bundles = []
         self.end_frame_index = 0
-        self.layer_type = xmlnode.get('layerType', default='normal')
+        self.layer_type = xmlnode.get('layerType', 'normal')
         self._snapshots = {}
 
-        for bundle_xmlnode in self.xmlnode.findall("{*}frames/*"):
+        for bundle_xmlnode in self.xmlnode.frames.findChildren(recursive=False):
             new_bundle = ElementBundle(xflsvg, self, bundle_xmlnode)
             new_bundle.parent = self
             self.bundles.append(new_bundle)
@@ -489,11 +536,12 @@ class Asset(AnimationObject):
         self._snapshots = {}
         self.frame_count = 0
 
-        timelines = xmlnode.findall("{*}*/{*}DOMTimeline")
+        timelines = xmlnode.timelines or xmlnode.timeline
+        timelines = list(timelines.findChildren(recursive=False))
         if len(timelines) > 1:
             raise Exception("this library isn't built to handle multiple timelines")
 
-        for index, xmlnode in enumerate(timelines[0].findall("{*}layers/*")):
+        for index, xmlnode in enumerate(timelines[0].layers.findChildren(recursive=False)):
             layer_id = f"{self.id}_L{index}"
             layer = Layer(xflsvg, self, layer_id, index, xmlnode)
             layer.parent = self
@@ -526,8 +574,8 @@ class Asset(AnimationObject):
 class Document(Asset):
     def __init__(self, xflsvg, xmlnode):
         super().__init__(xflsvg, "", xmlnode)
-        self.width = int(xmlnode.get('width'))
-        self.height = int(xmlnode.get('height'))
+        self.width = int(xmlnode.DOMDocument['width'])
+        self.height = int(xmlnode.DOMDocument['height'])
 
 
 class SvgFile:
@@ -551,32 +599,58 @@ class SvgFile:
 class SvgSpritemap:
     def __init__(self, spritemap_dir: str):
         self.filepath = os.path.normpath(spritemap_dir)
-        self.spritemaps = {}
+        self._spritemaps = None
+        self._xflmaps = None
+        self._metadata = None
 
-        with open(f"{spritemap_dir}/spritemap.json") as metadata_file:
-            self.metadata = json.load(metadata_file)
+    @property
+    def spritemaps(self):
+        if self._spritemaps:
+            return self._spritemaps
 
-        for spritemap_fn in glob(f"{spritemap_dir}/spritemap*.svg"):
+        self._spritemaps = {}
+        for spritemap_fn in glob(f"{self.filepath}/spritemap*.svg"):
             spritemap_id = os.path.basename(spritemap_fn)
-            self.spritemaps[spritemap_id] = SvgFile(spritemap_fn)
+            self._spritemaps[spritemap_id] = SvgFile(spritemap_fn)
+
+        return self._spritemaps
+
+    @property
+    def metadata(self):
+        if self._metadata:
+            return self._metadata
+
+        with open(f"{self.filepath}/spritemap.json") as spritemap_file:
+            spritemap = json.load(spritemap_file)
+
+        with open(f"{self.filepath}/xflmap.json") as xflmap_file:
+            xflmap = json.load(xflmap_file)
+
+
+        # re-structure the data for easy lookup
+        shapes = {}
+        for shape in xflmap:
+            shape_id = shape['id']
+            shapes[shape_id] = shape
+
+        # map lookup details to sprite details
+        self._metadata = {}
+        for sprite in spritemap['sprites']:
+            shape_id = sprite['id']
+            shape = shapes[shape_id]
+            key = (
+                shape['symbol'],
+                shape['layer'],
+                shape['frame'],
+                tuple(shape['elementIndexes'])
+            )
+            self._metadata[key] = sprite
+
+        return self._metadata
 
     def get_sprite(self, asset_id, layer_index, frame_index, element_index, buffer=20):
-        found_match = False
-        for data in self.metadata["sprites"]:
-            if data["symbolname"] != asset_id:
-                continue
-            if data["layerindex"] != layer_index:
-                continue
-            if data["frameindex"] != frame_index:
-                continue
-            if data["elementindex"] != element_index:
-                continue
-            
-            found_match = True
-            break
-        
-        if not found_match:
-            seterror()
+        data = self.metadata.get((asset_id, layer_index, frame_index, element_index), None)
+        if not data:
             print('no data for', asset_id, layer_index, frame_index, element_index)
             return None
         
@@ -607,25 +681,14 @@ class SvgSpritemap:
         return str(root.svg)
     
     def get_origin(self, asset_id, layer_index, frame_index, element_index):
-        found_match = False
-        for data in self.metadata["sprites"]:
-            if data["symbolname"] != asset_id:
-                continue
-            if data["layerindex"] != layer_index:
-                continue
-            if data["frameindex"] != frame_index:
-                continue
-            if data["elementindex"] != element_index:
-                continue
-            
-            found_match = True
-            break
-        
-        if not found_match:
-            seterror()
-            return None
+        if ShapeRecorder.stack:
+            return [0, 0]
 
-        return [data['transformX'], data['transformY']]
+        data = self.metadata.get((asset_id, layer_index, frame_index, element_index), None)
+        if not data:
+            return None
+        
+        return data['transformX'], data['transformY']
 
 
 class SvgLoader:
@@ -636,8 +699,22 @@ class SvgLoader:
         self.frame_index = frame_index
         self.path = path
     
-    def load(self):
-        return self.spritemap.get_sprite(asset_id, layer_index, frame_index, path)
+    def load_sprite(self):
+        return self.spritemap.get_sprite(
+            self.asset_id,
+            self.layer_index,
+            self.frame_index,
+            self.path
+        )
+
+    def load_origin(self):
+        return self.spritemap.get_origin(
+            self.asset_id,
+            self.layer_index,
+            self.frame_index,
+            self.path
+        )
+
 
 class XflSvg:
     def __init__(self, xflsvg_dir: str):
@@ -648,8 +725,10 @@ class XflSvg:
         self._shapes = {}
 
         document_path = os.path.join(xflsvg_dir, "DOMDocument.xml")
-        document_xmlnode = ElementTree.parse(document_path).getroot()
-        self.frames = Document(self, document_xmlnode)
+        with open(document_path) as document_file:
+            document_soup = BeautifulSoup(document_file, 'xml')
+
+        self.frames = Document(self, document_soup)
 
     def get_shape(self, asset_id, layer_index, frame_index, path):
         key = (asset_id, layer_index, frame_index, path)
@@ -660,21 +739,22 @@ class XflSvg:
         result = SVGSnapshot(key, loader)
         self._shapes[key] = result
 
-        origin = self.spritemap.get_origin(asset_id, layer_index, frame_index, path)
-        if origin == None:
-            origin = [0, 0]
-            
-        return result, origin
+        return result
     
 
-    def get_asset(self, safe_asset_id):
+    def get_safe_asset(self, safe_asset_id):
         asset_id = html.unescape(safe_asset_id)
 
         if asset_id in self._assets:
             return self._assets[asset_id]
 
         asset_path = os.path.join(self.filepath, "LIBRARY", f"{safe_asset_id}.xml")
-        asset_xmlnode = ElementTree.parse(asset_path).getroot()
-        asset = Asset(self, asset_id, asset_xmlnode)
+        with open(asset_path) as asset_file:
+            asset_soup = BeautifulSoup(asset_file, 'xml')
+        
+        asset = Asset(self, asset_id, asset_soup)
         self._assets[asset_id] = asset
         return asset
+
+    def get_asset(self, asset_id):
+        return self._assets[asset_id]

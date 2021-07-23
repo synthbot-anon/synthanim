@@ -707,106 +707,52 @@ var SymbolExporter = /** @class */ (function () {
         synthrunner_js_1.logger.log("total:", total);
         // pendingConversions.forEach((x) => logger.log(x));
     };
-    SymbolExporter.prototype._dumpShapeSpritesheetFromLibrary = function (animationLibrary, tempAssetDoc, pendingConversions, packer, newNames) {
-        var _this = this;
-        var tempAnimationFile = new AnimationFile(tempAssetDoc);
-        var midX = tempAssetDoc.width / 2;
-        var midY = tempAssetDoc.height / 2;
+    SymbolExporter.prototype._dumpShapeSpritesheetFromDocument = function (animationDoc, packer) {
+        var newNames = {};
         var completed = Object.keys(newNames).length;
         var newlyCompleted = null;
         var failedConversions = [];
-        var total = pendingConversions.length;
-        var getAssetFromTempAssetDoc = function (assetName) {
-            var index = tempAssetDoc.library.findItemIndex(newNames[assetName]);
-            return tempAssetDoc.library.items[index];
-        };
-        while (newlyCompleted !== 0) {
-            newlyCompleted = 0;
-            failedConversions = [];
-            pendingConversions.forEach(function (shapeName) {
-                if (shapeName in newNames) {
-                    return;
-                }
-                var shape = _this.animationFile.knownShapes[shapeName];
-                var parentSymbol = shape.layer.symbol;
-                if (!parentSymbol) {
-                    // can't handle orphaned shapes this way
-                    return;
-                }
-                try {
-                    synthrunner_js_1.logger.log("converting " + shapeName + (" " + completed + " / " + total));
-                    tempAssetDoc.addItem({ x: midX, y: midY }, parentSymbol.flSymbol);
-                    // unlock the symbol
-                    var flLayer = tempAssetDoc.getTimeline().layers[0];
-                    var flElement = flLayer.frames[0].elements[0];
-                    flLayer.locked = false;
-                    flLayer.visible = true;
-                    flLayer.layerType = "normal";
-                    // enter the symbol
-                    flElement.selected = true;
-                    tempAssetDoc.enterEditMode("inPlace");
-                    try {
-                        // select the shape
-                        shape.refreshFlObjects(tempAssetDoc);
-                        shape.select(tempAssetDoc);
-                        // convert the shape
-                        var flShape = shape.flElement;
-                        var width = flShape.width;
-                        var height = flShape.height;
-                        var flSymbol = tempAssetDoc.convertToSymbol("graphic", shapeName, "center");
-                        // add the shape to the packer
-                        newNames[shapeName] = flSymbol.name;
-                        packer.addImage(function () { return getAssetFromTempAssetDoc(shapeName); }, shape, width, height);
-                        newlyCompleted += 1;
-                        completed += 1;
-                    }
-                    finally {
-                        // go back to a clear document
-                        tempAssetDoc.exitEditMode();
-                        tempAssetDoc.deleteSelection();
-                    }
-                }
-                catch (err) {
-                    synthrunner_js_1.logger.log("delaying conversion for " + shapeName);
-                    synthrunner_js_1.logger.log(err);
-                }
-            });
-        }
-        return failedConversions;
-    };
-    SymbolExporter.prototype._dumpShapeSpritesheetFromDocument = function (animationDoc, pendingConversions, packer, newNames) {
-        var _this = this;
-        var completed = Object.keys(newNames).length;
-        var newlyCompleted = null;
-        var failedConversions = [];
-        var total = pendingConversions.length;
         var getAssetFromAnimationDoc = function (assetName) {
             var index = animationDoc.library.findItemIndex(newNames[assetName]);
             return animationDoc.library.items[index];
         };
+        // enter the one symbol
+        var flLayer = animationDoc.getTimeline().layers[0];
+        var flSymbol = flLayer.frames[0].elements[0];
+        flSymbol.selected = true;
+        animationDoc.enterEditMode("inPlace");
+        var flTimeline = fl.getDocumentDOM().getTimeline();
         while (newlyCompleted !== 0) {
             newlyCompleted = 0;
             failedConversions = [];
-            pendingConversions.forEach(function (shapeName) {
-                if (shapeName in newNames) {
+            flTimeline.layers[0].frames.forEach(function (flFrame, id) {
+                if (id in newNames) {
                     return;
                 }
+                var shapeName = "SynthShape_" + id + "_v2";
                 try {
-                    synthrunner_js_1.logger.log("converting " + shapeName + (" " + completed + " / " + total));
-                    var shape = _this.animationFile.knownShapes[shapeName];
+                    synthrunner_js_1.logger.log("converting " + (completed + 1) + " / " + flTimeline.layers[0].frames.length);
                     // select the shape
-                    _this.animationFile.selectElement(shape, function (x) { return null; });
-                    // 	(x) => x.matrix = {
-                    // 	a: 1, b: 0, c: 1, d: 0, tx: 0, ty: 0
-                    // });
+                    flTimeline.currentFrame = id;
+                    var flElement = flFrame.elements[0];
+                    flElement.selected = true;
                     // convert it to a symbol
-                    var flShape = shape.flElement;
-                    var width = flShape.width;
-                    var height = flShape.height;
-                    var flSymbol = animationDoc.convertToSymbol("graphic", shapeName, "center");
+                    var width = flElement.width;
+                    var height = flElement.height;
+                    var transformX = flElement.transformX;
+                    var transformY = flElement.transformY;
+                    var flNewSymbol = animationDoc.convertToSymbol("graphic", shapeName, "center");
+                    if (!flNewSymbol) {
+                        return;
+                    }
                     // add it to the packer
-                    newNames[shapeName] = flSymbol.name;
-                    packer.addImage(function () { return getAssetFromAnimationDoc(shapeName); }, shape, width, height);
+                    newNames[id] = flNewSymbol.name;
+                    var meta = {
+                        id: id,
+                        transformX: transformX,
+                        transformY: transformY,
+                    };
+                    packer.addImage(function () { return getAssetFromAnimationDoc(id); }, meta, width, height, transformX, transformY);
                     completed += 1;
                     newlyCompleted += 1;
                 }
@@ -818,27 +764,7 @@ var SymbolExporter = /** @class */ (function () {
         }
         return failedConversions;
     };
-    SymbolExporter.prototype.dumpShapeSpritesheet = function (folderPath) {
-        var shapeNames = [];
-        var animationDoc = fl.getDocumentDOM();
-        var animationLibrary = animationDoc.library;
-        var packer = new ImagePacker_js_1["default"]();
-        var count = 0;
-        // convert all shapes to symbols
-        var pendingConversions = Object.keys(this.animationFile.knownShapes);
-        var newNames = {};
-        var tempAssetDoc = fl.createDocument("timeline");
-        this._dumpShapeSpritesheetFromLibrary(animationLibrary, tempAssetDoc, pendingConversions, packer, newNames);
-        this._dumpShapeSpritesheetFromDocument(animationDoc, pendingConversions, packer, newNames);
-        synthrunner_js_1.logger.log("--- failed conversions ---");
-        pendingConversions.forEach(function (shapeName) {
-            if (shapeName in newNames) {
-                return;
-            }
-            synthrunner_js_1.logger.log("failed: ", shapeName);
-        });
-        synthrunner_js_1.logger.log("--- ---");
-        var shapeDoc = fl.createDocument("timeline");
+    SymbolExporter.prototype._dumpPackerToSvg = function (shapeDoc, packer, folderPath) {
         shapeDoc.width = 8192;
         shapeDoc.height = 8192;
         var shapeTimeline = shapeDoc.getTimeline();
@@ -849,7 +775,7 @@ var SymbolExporter = /** @class */ (function () {
         spritemap['sprites'] = [];
         spritemap['meta'] = {
             'app': 'Synthrunner - Pony Preservation Project',
-            'version': '21.7.2.1',
+            'version': '21.7.23.1',
             'format': 'svg',
             'size': { 'w': 8192, 'h': 8192 }
         };
@@ -863,25 +789,22 @@ var SymbolExporter = /** @class */ (function () {
             frame.forEach(function (_a) {
                 var image = _a.image, position = _a.position;
                 var shapeItem = image.data();
-                if (position === null) {
-                    synthrunner_js_1.logger.log("... skipping " + shapeItem.name);
+                if (position === null || !shapeItem) {
+                    synthrunner_js_1.logger.log("... skipping " + image.id);
                 }
                 else {
                     position.dump("adding " + shapeItem.name);
                     shapeDoc.addItem({ x: position.x(), y: position.y() }, shapeItem);
                     spritemap['sprites'].push({
-                        'symbolname': (image.shape.layer.symbol !== null) ? image.shape.layer.symbol.id : "",
-                        'layerindex': image.shape.layer.layerIndex,
-                        'frameindex': image.shape.frameIndex,
-                        'elementindex': image.shape.elementIndex,
+                        'id': image.meta.id,
                         'filename': imageName,
                         'svgprefix': shapeItem.name,
                         'x': position.x(),
                         'y': position.y(),
                         'width': position.width(),
                         'height': position.height(),
-                        'transformX': image.shape.transformX,
-                        'transformY': image.shape.transformY,
+                        'transformX': image.meta.transformX,
+                        'transformY': image.meta.transformY,
                         'applyscale': image.applyScale
                     });
                 }
@@ -890,10 +813,17 @@ var SymbolExporter = /** @class */ (function () {
         });
         synthrunner_js_1.logger.log("done");
         FLfile.write("file:///" + folderPath + "/spritemap.json", JSON.stringify(spritemap, null, 4));
-        if (tempAssetDoc) {
-            // fl.closeDocument(tempAssetDoc, false);
-        }
-        // fl.closeDocument(shapeDoc, false);
+    };
+    SymbolExporter.prototype.dumpShapeSpritesheet = function (folderPath) {
+        var shapeNames = [];
+        var animationDoc = fl.getDocumentDOM();
+        var animationLibrary = animationDoc.library;
+        var packer = new ImagePacker_js_1["default"]();
+        animationDoc.currentTimeline = 0;
+        this._dumpShapeSpritesheetFromDocument(animationDoc, packer);
+        var shapeDoc = fl.createDocument("timeline");
+        this._dumpPackerToSvg(shapeDoc, packer, folderPath);
+        fl.closeDocument(shapeDoc, false);
     };
     return SymbolExporter;
 }());
@@ -927,8 +857,8 @@ var ImagePacker = /** @class */ (function () {
         this.frameWidth = frameWidth || 8192;
         this.frameHeight = frameHeight || 8192;
     }
-    ImagePacker.prototype.addImage = function (image, shape, width, height) {
-        this.images.push(new Image(image, shape, Math.ceil(width), Math.ceil(height)));
+    ImagePacker.prototype.addImage = function (image, meta, width, height) {
+        this.images.push(new Image(image, meta, Math.ceil(width), Math.ceil(height)));
     };
     ImagePacker.prototype.toFrames = function () {
         var _this = this;
@@ -1042,9 +972,9 @@ var PositionOption = /** @class */ (function () {
     return PositionOption;
 }());
 var Image = /** @class */ (function () {
-    function Image(data, shape, width, height) {
+    function Image(data, meta, width, height) {
         this.data = data;
-        this.shape = shape;
+        this.meta = meta;
         this.width = width;
         this.height = height;
         this.applyScale = 1.0;

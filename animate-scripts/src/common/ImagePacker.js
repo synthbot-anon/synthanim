@@ -7,8 +7,8 @@ export default class ImagePacker {
 		this.frameHeight = frameHeight || 8192;
 	}
 
-	addImage(image, shape, width, height) {
-		this.images.push(new Image(image, shape, Math.ceil(width), Math.ceil(height)))
+	addImage(image, meta, width, height) {
+		this.images.push(new Image(image, meta, Math.ceil(width), Math.ceil(height)))
 	}
 
 	toFrames() {
@@ -144,9 +144,9 @@ class PositionOption {
 }
 
 class Image {
-	constructor(data, shape, width, height) {
+	constructor(data, meta, width, height) {
 		this.data = data;
-		this.shape = shape;
+		this.meta = meta;
 		this.width = width;
 		this.height = height;
 		this.applyScale = 1.0;
