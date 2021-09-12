@@ -12,7 +12,7 @@ import time
 import traceback
 import webbrowser
 
-from animationdb import xflsvg
+import xflsvg
 
 from .config import SynthConfigParser, ConfigArgAction
 from synthrunner import files
@@ -123,17 +123,12 @@ def dump_shapes(args):
         with open(f'{outp}/PublishSettings.xml', 'w') as publish_settings:
             publish_settings.write(data)
 
-        with xflsvg.ShapeRecorder() as recorder:
-            xfl = xflsvg.XflSvg(outp)
-            for shot in xfl.frames.snapshots:
-                shot.render(recorder.context)
+        recorder = xflsvg.RecordingXflSvg(outp)
+        xflmap_json = recorder.to_json()
 
-            xflmap_json = recorder.to_json()
-
-            shape_xfl_dir = os.path.join(outp, '__ppp_temp')
-            shape_xfl_path = os.path.join(shape_xfl_dir, 'simple.xfl')
-            recorder.to_xfl(shape_xfl_dir)
-
+        shape_xfl_dir = os.path.join(outp, '__ppp_temp')
+        shape_xfl_path = os.path.join(shape_xfl_dir, 'xfl_template.xfl')
+        recorder.to_xfl(shape_xfl_dir)
 
         spritemap_path = os.path.join(outp, 'spritemaps')
         print_deque(animate.dump_shapes(shape_xfl_path, spritemap_path))
@@ -141,6 +136,8 @@ def dump_shapes(args):
         xflmap_path = os.path.join(spritemap_path, 'xflmap.json')
         with open(xflmap_path, 'w+') as xflmap:
             xflmap.write(xflmap_json)
+        
+        shutil.rmtree(shape_xfl_dir)
 
 
 

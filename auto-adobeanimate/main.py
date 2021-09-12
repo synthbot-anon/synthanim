@@ -1,5 +1,4 @@
 import sys
-sys.path.append('../')
 
 import synthrunner.__main__
 import traceback
