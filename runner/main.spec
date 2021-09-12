@@ -5,7 +5,10 @@ block_cipher = None
 
 
 a = Analysis(['main.py'],
-             pathex=['C:\\Users\\synthbot\\animate-tools\\runner'],
+             pathex=[
+               'C:\\Users\\synthbot\\animate-tools\\runner',
+               'C:\\Users\\synthbot\\animate-tools\\animationdb'
+             ],
              binaries=[],
              datas=[
                 ("animate-scripts-dist/*.jsfl", "./animate-scripts-dist"),
