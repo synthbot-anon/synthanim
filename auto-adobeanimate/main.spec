@@ -6,13 +6,13 @@ block_cipher = None
 
 a = Analysis(['main.py'],
              pathex=[
-               'C:\\Users\\synthbot\\animate-tools\\runner',
-               'C:\\Users\\synthbot\\animate-tools\\animationdb'
+               r'C:\Users\synthbot\animate-tools\auto-adobeanimate',
              ],
              binaries=[],
              datas=[
                 ("animate-scripts-dist/*.jsfl", "./animate-scripts-dist"),
-                ("animate-tests/*.fla", "./animate-tests")
+                ("animate-tests/*.fla", "./animate-tests"),
+                ("../xflsvg/xflsvg/xfl_template", "./xflsvg/xfl_template")
              ],
              hiddenimports=[],
              hookspath=[],

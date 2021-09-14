@@ -1,5 +1,8 @@
-import cairosvg
-import cairocffi as cairo
+try:
+    import cairosvg
+    import cairocffi as cairo
+except:
+    pass
 
 from .xflsvg import Snapshot
 from .xflsvg import XflSvg
@@ -8,10 +11,8 @@ from .xflsvg import XflSvg
 _EMPTY_SVG = '<svg height="1px" width="1px" viewBox="0 0 1 1" />'
 
 
-class SVGSnapshot(Snapshot):
-    def __init__(self, name, loader):
-        super().__init__()
-        self.name = name
+class SVGSnapshot:
+    def __init__(self, loader):
         self.loader = loader
         self._svg = None
         self._png = None
@@ -55,28 +56,6 @@ class SVGSnapshot(Snapshot):
         context.restore()
 
 
-_IDENTITY_MATRIX = [1, 0, 0, 1, 0, 0]
-
-
-class TransformedSnapshot(Snapshot):
-    def __init__(self, original, origin=[0, 0], matrix=None):
-        super().__init__()
-        self.original = original
-        self.origin = origin
-        matrix = matrix or _IDENTITY_MATRIX
-        self.matrix = cairo.Matrix(*matrix)
-        self.original.parent = self
-
-    def render(self, context):
-        self.original.parent = self
-
-        context.save()
-        context.translate(self.origin[0], self.origin[1])
-        context.transform(self.matrix)
-        self.original.render(context)
-        context.restore()
-
-
 def to_png(self, width, height):
     output = cairo.ImageSurface(cairo.FORMAT_ARGB32, width, height)
     with cairo.Context(output) as context:
@@ -87,6 +66,21 @@ def to_png(self, width, height):
 
 class RenderingXflSvg(XflSvg):
     def __init__(self, xflsvg_dir) -> None:
-        super().__init__(self, SVGSnapshot, TransformedSnapshot, xflsvg_dir)
+        super().__init__(xflsvg_dir)
+        self.svg_cache = {}
     
-    # add methods for rendering a shape, asset, frame, etc
+    def render_svg(self, svg_snapshot, context):
+        path = svg_snapshot.path
+        if path not in self.svg_cache:
+            self.svg_cache[path] = SVGSnapshot(svg_snapshot.loader)
+
+        self.svg_cache[path].render(context)
+
+    def push_transform(self, transformed_snapshot, context):
+        matrix = cairo.Matrix(*transformed_snapshot.matrix)
+        context.save()
+        context.translate(*transformed_snapshot.origin)
+        context.transform(matrix)
+
+    def pop_transform(self, transformed_snapshot, context):
+        context.restore()

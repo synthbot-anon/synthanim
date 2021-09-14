@@ -46,7 +46,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.''',
     packages=['xflsvg'],
-    install_requires=['bs4'],
+    install_requires=['bs4', 'html5lib', 'lxml'],
     include_package_data=True,
 
     classifiers=[

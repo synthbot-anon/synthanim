@@ -17,7 +17,6 @@ by Assets. Assets have a fixed number of layers and fixed duration.
 
 """
 
-import contextlib
 import copy
 from glob import glob
 import json
@@ -29,25 +28,53 @@ from typing import Sequence
 
 from bs4 import BeautifulSoup
 
+_snapshot_index = 0
 
 class Snapshot:
-    def __init__(self):
+    def __init__(self, xflsvg):
+        global _snapshot_index
+
+        self.xflsvg = xflsvg
         self.owner = None
         self.parent = None
         self.frame_index = -1
+        self.identifier = _snapshot_index
+        _snapshot_index += 1
 
+class SVGSnapshot(Snapshot):
+    def __init__(self, xflsvg, path, loader):
+        super().__init__(xflsvg)
+        self.path = path
+        self.loader = loader
+    
+    def render(self, *args, **kwargs):
+        self.xflsvg.render_svg(self, *args, **kwargs)
+    
+_IDENTITY_MATRIX = [1, 0, 0, 1, 0, 0]
 
-class EmptySnapshot:
-    def __init__(self):
-        self.parent = None
+class TransformedSnapshot(Snapshot):
+    def __init__(self, xflsvg, original, origin=None, matrix=None):
+        super().__init__(xflsvg)
+        self.original = original
+        self.origin = origin or [0,0]
+        self.matrix = matrix or _IDENTITY_MATRIX
+    
+    def render(self, *args, **kwargs):
+        self.xflsvg.push_transform(self, *args, **kwargs)
+        self.original.render(*args, **kwargs)
+        self.xflsvg.pop_transform(self, *args, **kwargs)
+
+class EmptySnapshot(Snapshot):
+    def __init__(self, xflsvg):
+        print('this should not happen')
+        super().__init__(self, xflsvg)
 
     def render(self, *args, **kwargs):
         pass
 
-
 class CompositeSnapshot(Snapshot):
-    def __init__(self):
-        super().__init__()
+    def __init__(self, xflsvg):
+        super().__init__(xflsvg)
         self.children = []
 
     def add_child(self, child_snapshot):
@@ -112,7 +139,7 @@ class Element(AnimationObject):
         self.origin = _get_origin(xmlnode)
 
     def __getitem__(self, k: int) -> Snapshot:
-        result = EmptySnapshot()
+        result = EmptySnapshot(None)
         result.owner = self
         result.frame_index = k
         return result
@@ -124,7 +151,6 @@ class SymbolElement(Element):
         self.xflsvg = xflsvg
         self.loop_type = xmlnode.get("loop")
         self.asset = xflsvg.get_safe_asset(xmlnode.get("libraryItemName"))
-        self.TransformedSnapshot = self.asset.xflsvg.TransformedSnapshot
         self.first_frame = int(xmlnode.get("firstFrame", default=0))
         self.first_frame = min(self.asset.frame_count - 1, self.first_frame)
         self.duration = duration
@@ -140,8 +166,8 @@ class SymbolElement(Element):
         else:
             raise Exception(f"Unknown loop type: {self.loop_type}")
 
-        result = self.xflsvg.TransformedSnapshot(
-            self.asset[frame_index], self.origin, self.matrix
+        result = TransformedSnapshot(
+            self.xflsvg, self.asset[frame_index], self.origin, self.matrix
         )
         result.owner = self
         result.frame_index = frame_index
@@ -171,8 +197,8 @@ class ShapeElement(Element):
         self.svg_snapshot.frame_index = 0
 
     def __getitem__(self, iteration: int) -> Snapshot:
-        result = self.xflsvg.TransformedSnapshot(
-            self.svg_snapshot, self.origin, self.matrix
+        result = TransformedSnapshot(
+            self.xflsvg, self.svg_snapshot, self.origin, self.matrix
         )
         result.owner = self
         result.frame_index = 0
@@ -200,7 +226,6 @@ class GroupElement(Element, BundleContext):
 
         self.xflsvg = xflsvg
         self.asset = asset
-        self.TransformedSnapshot = self.asset.xflsvg.TransformedSnapshot
         self.layer = layer
         self.start_frame_index = start_frame_index
         self.duration = duration
@@ -240,13 +265,13 @@ class GroupElement(Element, BundleContext):
             self.elements.append(element)
 
     def __getitem__(self, iteration: int) -> Snapshot:
-        result = CompositeSnapshot()
+        result = CompositeSnapshot(self.xflsvg)
         result.owner = self
         result.frame_index = iteration
         for child in self.elements:
             result.add_child(child[iteration])
 
-        result = self.xflsvg.TransformedSnapshot(result, self.origin, self.matrix)
+        result = TransformedSnapshot(self.xflsvg, result, self.origin, self.matrix)
         result.owner = self
         result.frame_index = iteration
         return result
@@ -305,7 +330,7 @@ class ElementBundle(AnimationObject, BundleContext):
         if frame_index in self._snapshots:
             return self._snapshots[frame_index]
 
-        new_snapshot = CompositeSnapshot()
+        new_snapshot = CompositeSnapshot(self.xflsvg)
 
         if not self.has_index(frame_index):
             return new_snapshot
@@ -340,6 +365,7 @@ class ElementBundle(AnimationObject, BundleContext):
 class Layer(AnimationObject):
     def __init__(self, xflsvg, asset: "Asset", id: str, index: int, xmlnode):
         super().__init__()
+        self.xflsvg = xflsvg
         self.asset = asset
         self.id = id
         self.index = index
@@ -367,7 +393,7 @@ class Layer(AnimationObject):
         if frame_index in self._snapshots:
             return self._snapshots[frame_index]
 
-        new_snapshot = CompositeSnapshot()
+        new_snapshot = CompositeSnapshot(self.xflsvg)
         for bundle in self.bundles:
             if bundle.has_index(frame_index):
                 new_snapshot.add_child(bundle[frame_index])
@@ -375,6 +401,7 @@ class Layer(AnimationObject):
         self._snapshots[frame_index] = new_snapshot
         new_snapshot.owner = self
         new_snapshot.frame_index = frame_index
+
         return new_snapshot
 
     def __len__(self) -> int:
@@ -413,7 +440,7 @@ class Asset(AnimationObject):
         if frame_index in self._snapshots:
             return self._snapshots[frame_index]
 
-        new_snapshot = CompositeSnapshot()
+        new_snapshot = CompositeSnapshot(self.xflsvg)
         for layer in self.layers:
             if layer.layer_type == "normal":
                 new_snapshot.add_child(layer[frame_index])
@@ -572,9 +599,7 @@ class SvgLoader:
 
 
 class XflSvg:
-    def __init__(self, SVGSnapshot, TransformedSnapshot, xflsvg_dir: str):
-        self.SVGSnapshot = SVGSnapshot
-        self.TransformedSnapshot = TransformedSnapshot
+    def __init__(self, xflsvg_dir: str):
         self.filepath = os.path.normpath(xflsvg_dir)
         self.spritemap = SvgSpritemap(f"{self.filepath}/spritemaps")
         self.id = os.path.basename(self.filepath)  # MUST come after normpath
@@ -593,7 +618,7 @@ class XflSvg:
             return self._shapes[key]
 
         loader = SvgLoader(self.spritemap, asset_id, layer_index, frame_index, path)
-        result = self.SVGSnapshot(key, loader)
+        result = SVGSnapshot(self, key, loader)
         self._shapes[key] = result
 
         return result
@@ -614,27 +639,13 @@ class XflSvg:
 
     def get_asset(self, asset_id):
         return self._assets[asset_id]
-
-
-class BoringSVGSnapshot(Snapshot):
-    def __init__(self, loader):
-        super().__init__()
-
-    def render(self):
-        raise Exception()
-
-
-class BoringTransformedSnapshot(Snapshot):
-    def __init__(self, child, origin, matrix):
-        super().__init__()
-        self.child = child
-        self.origin = origin
-        self.matrix = matrix
-
-    def render(self):
-        raise Exception()
-
-
-class BoringXflSvg(XflSvg):
-    def __init__(self, xflsvg_dir):
-        super().__init__(BoringSVGSnapshot, BoringTransformedSnapshot, xflsvg_dir)
+    
+    def render_svg(self, svg_snapshot, *args, **kwargs):
+        pass
+    
+    def push_transform(self, transformed_snapshot, *args, **kwargs):
+        pass
+    
+    def pop_transform(self, transformed_snapshot, *args, **kwargs):
+        pass
+    

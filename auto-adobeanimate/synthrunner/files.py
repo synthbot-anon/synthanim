@@ -4,9 +4,7 @@ import itertools
 import io
 import os
 import re
-import requests
 import tkinter.filedialog
-from tqdm import tqdm
 import zipfile
 
 from .animate_interface import AnimateInterface
@@ -82,64 +80,6 @@ def select_input_symbols(args):
         return [SymbolFile(result)]
 
 
-def download_animate():
-    print()
-    # the actual file: https://drive.google.com/file/d/1gwXmnRS9NLgp188zFqeVw-28hBphXkSj/view?usp=sharing
-    url = "https://drive.google.com/u/0/uc?id=1gwXmnRS9NLgp188zFqeVw-28hBphXkSj&export=download"
-    download_path = os.path.realpath("./downloads")
-    animate_path = os.path.join(download_path, "Adobe Animate 21.0.5\\Animate.exe")
-
-    session = requests.Session()
-    response = session.get(url, stream=True)
-
-    if "text/html" in response.headers.get("content-type"):
-        confirm_page = response.text
-        download_pattern = re.search(
-            r'<a id="uc-download-link"[^>]*href="([^"]*)"', confirm_page
-        )
-        download_relpath = html.unescape(download_pattern.group(1))
-        download_url = f"https://drive.google.com/u/0{download_relpath}"
-        response = session.get(download_url)
-
-    total = int(response.headers.get("content-length", 0))
-
-    downloaded_zip = io.BytesIO()
-
-    with tqdm(
-        desc="Downloading Adobe Animate 21.0.5 (patched)",
-        unit="B",
-        unit_scale=True,
-        unit_divisor=1024,
-        ascii=True,
-    ) as progress_bar:
-        for data in response.iter_content(chunk_size=1024):
-            downloaded_zip.write(data)
-            size = len(data)
-            progress_bar.update(size)
-            progress_bar.refresh()
-
-    with zipfile.ZipFile(downloaded_zip) as zf:
-        with tqdm(unit=" files", ascii=True) as progress_bar:
-            for member in zf.namelist():
-                basename = os.path.basename(member)
-                progress_bar.set_description(f"Extracting {basename}")
-                progress_bar.update(1)
-                progress_bar.refresh()
-
-                target_path = os.path.join("downloads/", member)
-                if os.path.relpath(target_path, "./").startswith(".."):
-                    print(
-                        f"Please report this error. This file shouldn't exist in the Adobe Animate download: {member}"
-                    )
-                    sys.exit(-1)
-
-                zf.extract(member, "downloads/", pwd=b"iwtcird")
-
-    print()
-    print(f"Done. The file was saved to {animate_path}")
-
-    return animate_path
-
 def config_animate(args):
     return select_animate(args, get_confirmation=True)
 
@@ -180,13 +120,6 @@ def select_animate(args, get_confirmation=False):
         if response.lower() == "y" and get_validation(path):
             print("Using", path)
             return AnimateInterface(path)
-
-    # response = input("You're missing Adobe Animate. Do you want to download it? [y/n] ")
-    # should_download = response.lower() == "y"
-    # if should_download:
-    #     path = download_animate()
-    #     print("Using", path)
-    #     return save_and_create_interface(path)
 
     response = input(
         "Please select a version of Adobe Animate to use. [Enter]"
