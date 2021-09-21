@@ -2,6 +2,7 @@ import argparse
 import collections
 import difflib
 from glob import glob
+import json
 import os.path
 import re
 import queue
@@ -12,6 +13,7 @@ import time
 import traceback
 import webbrowser
 
+import pandas
 import xflsvg
 
 from .config import SynthConfigParser, ConfigArgAction
@@ -22,6 +24,7 @@ from .i_hate_windows import make_windows_usable
 def print_deque(x):
     for item in x:
         print(item)
+
 
 def dump_xfl(args):
     animate = files.select_animate(args)
@@ -84,9 +87,12 @@ def dump_samples(args):
         print_deque(animate.dump_symbol_samples(inp, output_folder))
     print("Done")
 
+
 def convert(args):
     animate = files.select_animate(args)
-    input_files = files.select_source(args, [("FLA file", "*.fla"), ("XFL file", "*.xfl")])
+    input_files = files.select_source(
+        args, [("FLA file", "*.fla"), ("XFL file", "*.xfl")]
+    )
     output_path = files.select_destination(args)
 
     print_deque(animate.open_animate())
@@ -97,57 +103,125 @@ def convert(args):
         print_deque(animate.convert(sourceFile=inp, outputDir=outp))
 
         # clear personal data
-        with open(f'{outp}/PublishSettings.xml') as publish_settings:
+        with open(f"{outp}/PublishSettings.xml") as publish_settings:
             data = publish_settings.read()
-        data = re.sub(r'\\[^\\]*\\AppData', r'\\anonymous\\AppData', data)
-        with open(f'{outp}/PublishSettings.xml', 'w') as publish_settings:
+        data = re.sub(r"\\[^\\]*\\AppData", r"\\anonymous\\AppData", data)
+        with open(f"{outp}/PublishSettings.xml", "w") as publish_settings:
             publish_settings.write(data)
+
 
 def dump_shapes(args):
     animate = files.select_animate(args)
-    input_files = files.select_source(args, [("FLA file", "*.fla"), ("XFL file", "*.xfl")])
+    input_files = files.select_source(
+        args, [("FLA file", "*.fla"), ("XFL file", "*.xfl")]
+    )
     output_path = files.select_destination(args)
 
-    print_deque(animate.open_animate())
+    # print_deque(animate.open_animate())
 
     for inp in input_files:
         basename = os.path.splitext(os.path.basename(inp))[0]
         outp = os.path.join(output_path, basename)
 
-        print_deque(animate.dump_xfl(sourceFile=inp, outputFile=f'{outp}.xfl'))
+        print_deque(animate.dump_xfl(sourceFile=inp, outputFile=f"{outp}.xfl"))
 
         # clear personal data
-        with open(f'{outp}/PublishSettings.xml') as publish_settings:
+        with open(f"{outp}/PublishSettings.xml") as publish_settings:
             data = publish_settings.read()
-        data = re.sub(r'\\[^\\]*\\AppData', r'\\Anonymous\\AppData', data)
-        with open(f'{outp}/PublishSettings.xml', 'w') as publish_settings:
+        data = re.sub(r"\\[^\\]*\\AppData", r"\\Anonymous\\AppData", data)
+        with open(f"{outp}/PublishSettings.xml", "w") as publish_settings:
             publish_settings.write(data)
 
-        recorder = xflsvg.RecordingXflSvg(outp)
-        xflmap_json = recorder.to_json()
+        recorder = xflsvg.XflSvgRecorder(outp)
+        xflmap = recorder.get_shapes()
 
-        shape_xfl_dir = os.path.join(outp, '__ppp_temp')
-        shape_xfl_path = os.path.join(shape_xfl_dir, 'xfl_template.xfl')
-        recorder.to_xfl(shape_xfl_dir)
+        shape_xfl_dir = os.path.join(outp, "__ppp_temp")
+        shape_xfl_path = os.path.join(shape_xfl_dir, "xfl_template.xfl")
+        recorder.to_shapes_xfl(shape_xfl_dir)
 
-        spritemap_path = os.path.join(outp, 'spritemaps')
+        spritemap_path = os.path.join(outp, "spritemaps")
         print_deque(animate.dump_shapes(shape_xfl_path, spritemap_path))
 
-        xflmap_path = os.path.join(spritemap_path, 'xflmap.json')
-        with open(xflmap_path, 'w+') as xflmap:
-            xflmap.write(xflmap_json)
+        xflmap_path = os.path.join(spritemap_path, "xflmap.json")
+        with open(xflmap_path, "w+") as xflmap_file:
+            xflmap_file.write(json.dumps(xflmap, indent=4))
+
+        tables = recorder.to_pandas()
+        shape_table = merge_shape_table(tables["pre-shapes"], spritemap_path, xflmap)
         
+        pandas_path = os.path.join(outp, "tables")
+        os.mkdir(pandas_path)
+        tables['frames'].to_parquet(f'{pandas_path}/frames.parquet')
+        shape_table.to_parquet(f'{pandas_path}/shapes.parquet')
+        tables['assets'].to_parquet(f'{pandas_path}/assets.parquet')
+
         shutil.rmtree(shape_xfl_dir)
 
 
+def merge_shape_table(xfl_shapes, spritemaps_dir, xflmap):
+    with open(f"{spritemaps_dir}/spritemap.json") as spritemap_file:
+        spritemap_data = spritemap_file.read()
+        spritemap = json.loads(spritemap_data)
+
+    spritemap_rows = []
+    for sprite in spritemap["sprites"]:
+        id = sprite["id"]
+        xfl_data = xflmap[id]
+        new_spritemap = (
+            xfl_data["symbol"],
+            xfl_data["layer"],
+            xfl_data["frame"],
+            xfl_data["elementIndexes"],
+            sprite["filename"],
+            sprite["svgObjectPrefix"],
+            sprite["x"],
+            sprite["y"],
+            sprite["width"],
+            sprite["height"],
+            sprite["originX"],
+            sprite["originY"],
+            sprite["rescale"],
+        )
+        spritemap_rows.append(new_spritemap)
+
+    spritemap_dataframe = pandas.DataFrame(
+        data=spritemap_rows,
+        columns=[
+            "assetId",
+            "layerIndex",
+            "frameIndex",
+            "elementIndexes",
+            "filename",
+            "svgObjectPrefix",
+            "x",
+            "y",
+            "width",
+            "height",
+            "originX",
+            "originY",
+            "rescale",
+        ],
+    )
+
+    return (
+        xfl_shapes.reset_index()
+        .merge(
+            spritemap_dataframe,
+            how="left",
+            on=["assetId", "layerIndex", "frameIndex", "elementIndexes"],
+        )
+        .set_index("frameId")
+        .drop(columns=["assetId", "layerIndex", "frameIndex", "elementIndexes"])
+    )
 
 
 def debug(args):
-    path = r'C:\Users\synthbot\Desktop\berry-dest\dump-test\dump4\second-draft\MLP422_100'
+    path = (
+        r"C:\Users\synthbot\Desktop\berry-dest\dump-test\dump4\second-draft\MLP422_100"
+    )
 
     with xflsvg.ShapeRecorder() as recorder:
         xfl = xflsvg.XflSvg(path)
-
 
 
 class DataChecker:
@@ -161,36 +235,53 @@ class DataChecker:
         if match.size == 0:
             return
 
-        match_str = string[match.b:match.b+match.size]
+        match_str = string[match.b : match.b + match.size]
 
-        ratio = difflib.SequenceMatcher(None, a=orig, b=match_str, autojunk=False).ratio()
+        ratio = difflib.SequenceMatcher(
+            None, a=orig, b=match_str, autojunk=False
+        ).ratio()
         if ratio < 1.0 - self.sensitivity:
             return
 
         print(descr, match_str)
         self.matches.setdefault(filename, []).append((ratio, match_str))
 
-        
     def check_string(self, filename, string):
-        literal_checker = difflib.SequenceMatcher(None, a=self.value, b=string, autojunk=False)
-        self._check_string('Literal match:', filename, literal_checker, self.value, string)
+        literal_checker = difflib.SequenceMatcher(
+            None, a=self.value, b=string, autojunk=False
+        )
+        self._check_string(
+            "Literal match:", filename, literal_checker, self.value, string
+        )
 
-        lowercase_nospace_value = re.sub(r'\s', '', self.value.lower())
-        lowercase_nospace = re.sub(r'\s', '', string.lower())
-        lowercase_checker = difflib.SequenceMatcher(None, a=lowercase_nospace_value, b=lowercase_nospace, autojunk=False)
-        self._check_string('Normalized match:', filename, lowercase_checker, lowercase_nospace_value, lowercase_nospace)
+        lowercase_nospace_value = re.sub(r"\s", "", self.value.lower())
+        lowercase_nospace = re.sub(r"\s", "", string.lower())
+        lowercase_checker = difflib.SequenceMatcher(
+            None, a=lowercase_nospace_value, b=lowercase_nospace, autojunk=False
+        )
+        self._check_string(
+            "Normalized match:",
+            filename,
+            lowercase_checker,
+            lowercase_nospace_value,
+            lowercase_nospace,
+        )
 
     def check_binary(self, filename, data):
-        hex_data = ' '.join('%02x' % x for x in data)
-        hex_value = ' '.join('%02x' % ord(x) for x in self.value)
-        hex_checker = difflib.SequenceMatcher(None, a=hex_value, b=hex_data, autojunk=False)
-        self._check_string('Hex match:', filename, hex_checker, hex_value, hex_data)
+        hex_data = " ".join("%02x" % x for x in data)
+        hex_value = " ".join("%02x" % ord(x) for x in self.value)
+        hex_checker = difflib.SequenceMatcher(
+            None, a=hex_value, b=hex_data, autojunk=False
+        )
+        self._check_string("Hex match:", filename, hex_checker, hex_value, hex_data)
 
     def print_top_matches(self):
-        print(' == Top matches ==')
+        print(" == Top matches ==")
         top_per_file = []
         for filename in self.matches:
-            top_per_file.append([filename, *max(self.matches[filename], key=lambda x: x[0])])
+            top_per_file.append(
+                [filename, *max(self.matches[filename], key=lambda x: x[0])]
+            )
 
         n = 10
         last_ratio = None
@@ -201,7 +292,7 @@ class DataChecker:
             if n == 0 and ratio < last_ratio:
                 break
 
-            print('%.1f%%' % (match[1]*100), 'match', f'({match[2]})', 'in', match[0])
+            print("%.1f%%" % (match[1] * 100), "match", f"({match[2]})", "in", match[0])
             if ratio < 1.0 and n > 0:
                 n -= 1
                 last_ratio = ratio
@@ -209,8 +300,8 @@ class DataChecker:
 
 def check_data(args):
     input_dir = files.select_input_folder("Select a folder to check", None)
-    check_str = input('Value to check for (incl. capitals and spaces): ').strip()
-    sensitivity = float(input('Sensitivity (0.0 to 1.0, default 0.5): ').strip() or 0.5)
+    check_str = input("Value to check for (incl. capitals and spaces): ").strip()
+    sensitivity = float(input("Sensitivity (0.0 to 1.0, default 0.5): ").strip() or 0.5)
     checker = DataChecker(check_str, sensitivity)
     unchecked = []
 
@@ -224,20 +315,18 @@ def check_data(args):
                     checker.check_string(path, data)
                 except:
                     try:
-                        with open(path, 'rb') as input_file:
+                        with open(path, "rb") as input_file:
                             data = input_file.read()
                             checker.check_binary(path, data)
                     except:
                         unchecked.append(path)
                         raise
 
-
-
     checker.print_top_matches()
     if len(unchecked):
-        print(' == Unable to check these files ==')
-        print('\n'.join(unchecked))
-                
+        print(" == Unable to check these files ==")
+        print("\n".join(unchecked))
+
 
 def run_tests(args):
     animate = files.select_animate(args)
@@ -285,51 +374,64 @@ def run_tests(args):
 def setup(args):
     vcpp_location = "https://support.microsoft.com/en-us/topic/the-latest-supported-visual-c-downloads-2647da03-1eea-4433-9aff-95f26a218cc0"
     animate_location = "https://drive.google.com/drive/folders/17hgz4fbIqYetvxHh2MX1KdTP6efIauUU?usp=sharing"
-    data_location = "https://drive.google.com/drive/u/2/folders/1kk8Xb5Xht4wahyHYOIVpMRtB69eg3Yhl"
-    have_animate = input("""
+    data_location = (
+        "https://drive.google.com/drive/u/2/folders/1kk8Xb5Xht4wahyHYOIVpMRtB69eg3Yhl"
+    )
+    have_animate = input(
+        """
 --- ---
 The setup process does four things:
   1. If needed, walk you through downloading Adobe Animate.
   2. It walks you through downloading the data.
 
 You can quit at any time by pressing Ctrl+Shift+C simultaneously. [Enter]
-""")
-    open_browser = input(f"""
+"""
+    )
+    open_browser = input(
+        f"""
 --- ---
 To run Adobe Animate, you'll first need to install Microsoft Visual
 C++. If you don't already have it installed (or don't know), you
 should try installing it now. Do you want to open a browser to the
 download page? [y/n]
-""")
-    if open_browser and open_browser[0].lower() == 'y':
-        proceed = input("""
+"""
+    )
+    if open_browser and open_browser[0].lower() == "y":
+        proceed = input(
+            """
 When your browser opens to the page, look for the section titled
 "Visual Studio 2015, 2017 and 2019". [Enter]
-""")
+"""
+        )
         webbrowser.open(vcpp_location)
 
-    open_browser = input(f"""
+    open_browser = input(
+        f"""
 --- ---
 Once you have Visual C++ installed, you'll need the patched Adobe
 Animate. The patched Adobe Animate is here under
 "Adobe Animate 21.0.5.zip":
 - {animate_location}
 Do you want to open a browser to this location? [y/n]
-""")
-    if open_browser and open_browser[0].lower() == 'y':
+"""
+    )
+    if open_browser and open_browser[0].lower() == "y":
         webbrowser.open(animate_location)
 
-    input("""
+    input(
+        """
 --- ---
 Unzip the file to any location. The password is iwtcird. Once you do,
 come back here and hit enter to continue. Inside the unzipped folder,
 you'll see a file called "Animate - fully patched.exe". In the next
 step, make sure to select that file. [Enter]
-""")
+"""
+    )
 
     animate = files.config_animate(args)
 
-    open_browser = input(f"""
+    open_browser = input(
+        f"""
 --- ---
 Done with step 1. Next, you should download the animation files and
 symbol labels. You can download as much of or as little of the animation
@@ -355,11 +457,12 @@ You can find all of the files here:
 The link to these assets is in the thread. Do you want to open a browser
 to the link? [y/n]
 """
-)
-    if open_browser and open_browser[0].lower() == 'y':
+    )
+    if open_browser and open_browser[0].lower() == "y":
         webbrowser.open(data_location)
 
-    input("""
+    input(
+        """
 --- ---
 That's all. You can download the files as needed. You don't need to run this
 everytime you run the script. Your setup will persist in the file config.txt.
@@ -401,7 +504,8 @@ the middle.
 
 Cheers. [Enter]
 --- ---
-""")
+"""
+    )
 
 
 def main():
@@ -451,7 +555,6 @@ def main():
     cmd_setup = subparsers.add_parser("setup")
     cmd_check_data = subparsers.add_parser("check-data")
     run_tests_parser = subparsers.add_parser("run-tests")
-    
 
     handlers = {
         "setup": setup,
@@ -465,7 +568,8 @@ def main():
         "debug": debug,
     }
 
-    print("""Here are the basic commands:
+    print(
+        """Here are the basic commands:
   setup
   - This will walk you through setting up Adobe Animate and the animation
     data.
@@ -501,7 +605,8 @@ instead of files. For example:
 Adobe Animate will take focus when you execute any of these commands.
 REMEMBER that you can always hit Ctrl+Shift+C to stop the script. This will
 be important if you're running a long batch process and want to stop in
-the middle.""")
+the middle."""
+    )
 
     while True:
         command = input("celestia@animation-data:.$ ")

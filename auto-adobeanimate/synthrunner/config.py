@@ -21,7 +21,6 @@ class SynthConfigParser(configparser.ConfigParser):
                 super().write(config_file)
         except:
             pass
-        
 
 
 class ConfigArgAction(argparse.Action):

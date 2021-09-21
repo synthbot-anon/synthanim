@@ -2,7 +2,7 @@ from setuptools import setup
 
 setup(
     name='xflsvg',
-    version='0.0.1',    
+    version='0.1.0',    
     description='''A tool for working with XflSvg files and tabular animation data.
 
 This library is part of the Pony Preservation Project. It is designed to support
@@ -27,7 +27,7 @@ This project is currently in an early stage. The xflsvg format will change over
 time as we identify exactly what XFL data is necessary to recreate animations,
 as will the rendering code.
 
-You need to install cairocffi and cairosvg to use RenderingXflSvg.
+You need to install cairocffi and cairosvg to render things.
 ''',
     url='https://github.com/synthbot-anon/synthanim',
     author='Synthbot',
@@ -46,7 +46,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.''',
     packages=['xflsvg'],
-    install_requires=['bs4', 'html5lib', 'lxml'],
+    install_requires=['bs4', 'html5lib', 'lxml', 'pandas', 'fastparquet'],
     include_package_data=True,
 
     classifiers=[

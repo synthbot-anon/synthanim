@@ -41,30 +41,30 @@ def select_destination(args):
 
 
 def select_input_file(prompt, path, filetypes):
-    input(f'{prompt} [Enter]')
+    input(f"{prompt} [Enter]")
     result = path or tkinter.filedialog.askopenfilename(filetypes=filetypes)
-    print('Selected:', result)
+    print("Selected:", result)
     return result
 
 
 def select_output_file(prompt, path):
-    input(f'{prompt} [Enter]')
+    input(f"{prompt} [Enter]")
     result = path or tkinter.filedialog.asksaveasfilename()
-    print('Selected:', result)
+    print("Selected:", result)
     return result
 
 
 def select_input_folder(prompt, path):
-    input(f'{prompt} [Enter]')
+    input(f"{prompt} [Enter]")
     result = path or tkinter.filedialog.askdirectory(mustexist=True)
-    print('Selected:', result)
+    print("Selected:", result)
     return result
 
 
 def select_output_folder(prompt, path):
-    input(f'{prompt} [Enter]')
+    input(f"{prompt} [Enter]")
     result = path or tkinter.filedialog.askdirectory(mustexist=False)
-    print('Selected:', result)
+    print("Selected:", result)
     return result
 
 
@@ -74,14 +74,15 @@ def select_input_symbols(args):
         result = select_input_folder("Select symbol samples folder", args.sample)
         return [SymbolFile(x) for x in walk_files(result, filetypes)]
     else:
-        input('Select a symbol sample image [Enter]')
+        input("Select a symbol sample image [Enter]")
         result = args.sample or tkinter.filedialog.askopenfilename(filetypes=filetypes)
-        print('Selected:', result)
+        print("Selected:", result)
         return [SymbolFile(result)]
 
 
 def config_animate(args):
     return select_animate(args, get_confirmation=True)
+
 
 def select_animate(args, get_confirmation=False):
     def save_and_create_interface(path):
@@ -121,9 +122,7 @@ def select_animate(args, get_confirmation=False):
             print("Using", path)
             return AnimateInterface(path)
 
-    response = input(
-        "Please select a version of Adobe Animate to use. [Enter]"
-    )
+    response = input("Please select a version of Adobe Animate to use. [Enter]")
 
     path = tkinter.filedialog.askopenfilename(
         filetypes=[("Executable", "*.exe"), ("Any file", "*")]

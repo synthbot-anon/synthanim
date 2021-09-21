@@ -30,11 +30,13 @@ def suicide():
     # sys.exit() doesn't work with keyboard for unknown reasons
     os.kill(os.getpid(), 9)
 
+
 def exit_on_ctrl_c():
     SetConsoleCtrlHandler(console_handler, True)
 
+
 def exit_on_ctrl_shift_c():
-    keyboard.add_hotkey('ctrl+shift+c', suicide)
+    keyboard.add_hotkey("ctrl+shift+c", suicide)
 
 
 def disable_tkinter_window():

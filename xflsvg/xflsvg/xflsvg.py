@@ -39,6 +39,9 @@ class Snapshot:
         self.parent = None
         self.frame_index = -1
         self.identifier = _snapshot_index
+        self.children = []
+        self.matrix = None
+        self.origin = None
         _snapshot_index += 1
 
 class SVGSnapshot(Snapshot):
@@ -49,20 +52,20 @@ class SVGSnapshot(Snapshot):
     
     def render(self, *args, **kwargs):
         self.xflsvg.render_svg(self, *args, **kwargs)
-    
-_IDENTITY_MATRIX = [1, 0, 0, 1, 0, 0]
+        self.xflsvg.on_frame_rendered(self, *args, **kwargs)
 
 class TransformedSnapshot(Snapshot):
     def __init__(self, xflsvg, original, origin=None, matrix=None):
         super().__init__(xflsvg)
-        self.original = original
-        self.origin = origin or [0,0]
-        self.matrix = matrix or _IDENTITY_MATRIX
+        self.children.append(original)
+        self.origin = origin
+        self.matrix = matrix
     
     def render(self, *args, **kwargs):
         self.xflsvg.push_transform(self, *args, **kwargs)
-        self.original.render(*args, **kwargs)
+        self.children[0].render(*args, **kwargs)
         self.xflsvg.pop_transform(self, *args, **kwargs)
+        self.xflsvg.on_frame_rendered(self, *args, **kwargs)
 
 class EmptySnapshot(Snapshot):
     def __init__(self, xflsvg):
@@ -70,12 +73,11 @@ class EmptySnapshot(Snapshot):
         super().__init__(self, xflsvg)
 
     def render(self, *args, **kwargs):
-        pass
+        self.xflsvg.on_frame_rendered(self, *args, **kwargs)
 
 class CompositeSnapshot(Snapshot):
     def __init__(self, xflsvg):
         super().__init__(xflsvg)
-        self.children = []
 
     def add_child(self, child_snapshot):
         self.children.append(child_snapshot)
@@ -85,6 +87,8 @@ class CompositeSnapshot(Snapshot):
         for child in self.children[::-1]:
             child.parent = self
             child.render(*args, **kwargs)
+        
+        self.xflsvg.on_frame_rendered(self, *args, **kwargs)
 
 
 class AnimationObject(Sequence):
@@ -121,11 +125,11 @@ def _get_matrix(xmlnode):
 def _get_origin(xmlnode):
     outer = xmlnode.transformationPoint
     if outer == None:
-        return [0, 0]
+        return None
 
     inner = outer.Point
     if inner == None:
-        return [0, 0]
+        return None
 
     result = [float(inner.get("x", default=0)), float(inner.get("y", default=0))]
     return result
@@ -187,11 +191,11 @@ class ShapeElement(Element):
         self.layer = layer
         self.duration = duration
         self.path = tuple(path)
-        self.svg_snapshot = xflsvg.get_shape(
+        self.svg_snapshot = xflsvg.spritemap.get_shape(
             asset.id, layer.index, start_frame_index, self.path,
         )
 
-        self.origin = [0, 0]
+        # self.origin = None
 
         self.svg_snapshot.owner = self
         self.svg_snapshot.frame_index = 0
@@ -461,7 +465,7 @@ class Asset(AnimationObject):
 
 class Document(Asset):
     def __init__(self, xflsvg, xmlnode):
-        super().__init__(xflsvg, "", xmlnode)
+        super().__init__(xflsvg, f'file:///{xflsvg.id}', xmlnode)
         self.width = int(xmlnode.DOMDocument["width"])
         self.height = int(xmlnode.DOMDocument["height"])
 
@@ -485,11 +489,13 @@ class SvgFile:
 
 
 class SvgSpritemap:
-    def __init__(self, spritemap_dir: str):
+    def __init__(self, xflsvg, spritemap_dir: str):
+        self.xflsvg = xflsvg
         self.filepath = os.path.normpath(spritemap_dir)
         self._spritemaps = None
         self._xflmaps = None
         self._metadata = None
+        self._shapes = {}
 
     @property
     def spritemaps(self):
@@ -534,15 +540,8 @@ class SvgSpritemap:
             self._metadata[key] = sprite
 
         return self._metadata
-
-    def get_sprite(self, asset_id, layer_index, frame_index, element_index, buffer=20):
-        data = self.metadata.get(
-            (asset_id, layer_index, frame_index, element_index), None
-        )
-        if not data:
-            print("no data for", asset_id, layer_index, frame_index, element_index)
-            return None
-
+    
+    def get_sprite_ex(self, data, buffer=20):
         sheet = self.spritemaps[data["filename"]]
 
         root = BeautifulSoup("<svg/>", "html5lib")
@@ -556,7 +555,7 @@ class SvgSpritemap:
         root.svg.attrs["viewBox"] = f"{left} {top} {data['width']} {data['height']}"
         root.svg.append(sheet.defs)
 
-        prefix = re.sub(r"[^a-zA-Z0-9]", "_", data["svgprefix"])
+        prefix = re.sub(r"[^a-zA-Z0-9]", "_", data["svgObjectPrefix"])
         found = False
         for id in sheet.objects:
             if id.startswith(prefix) or id.startswith(f"FL_{prefix}"):
@@ -569,6 +568,21 @@ class SvgSpritemap:
 
         return str(root.svg)
 
+
+    def get_sprite(self, asset_id, layer_index, frame_index, element_index, buffer=20):
+        data = self.metadata.get(
+            (asset_id, layer_index, frame_index, element_index), None
+        )
+        if not data:
+            print("no data for", asset_id, layer_index, frame_index, element_index)
+            return None
+
+        return self.get_sprite_ex(data, buffer)
+    
+    def get_origin_ex(self, data):
+        return data["originX"], data["originY"]
+
+
     def get_origin(self, asset_id, layer_index, frame_index, element_index):
         data = self.metadata.get(
             (asset_id, layer_index, frame_index, element_index), None
@@ -576,35 +590,34 @@ class SvgSpritemap:
         if not data:
             return None
 
-        return data["transformX"], data["transformY"]
+        return self.get_origin_ex(data)
+    
+    def get_shape(self, asset_id, layer_index, frame_index, path):
+        key = (asset_id, layer_index, frame_index, tuple(path))
+        if key in self._shapes:
+            return self._shapes[key]
+
+        loader = SvgLoader(
+            load_sprite=lambda: self.get_sprite(asset_id, layer_index, frame_index, path),
+            load_origin=lambda: self.get_origin(asset_id, layer_index, frame_index, path))
+        result = SVGSnapshot(self.xflsvg, key, loader)
+        self._shapes[key] = result
+
+        return result
 
 
 class SvgLoader:
-    def __init__(self, spritemap, asset_id, layer_index, frame_index, path):
-        self.spritemap = spritemap
-        self.asset_id = asset_id
-        self.layer_index = layer_index
-        self.frame_index = frame_index
-        self.path = path
-
-    def load_sprite(self):
-        return self.spritemap.get_sprite(
-            self.asset_id, self.layer_index, self.frame_index, self.path
-        )
-
-    def load_origin(self):
-        return self.spritemap.get_origin(
-            self.asset_id, self.layer_index, self.frame_index, self.path
-        )
+    def __init__(self, load_sprite, load_origin):
+        self.load_sprite = load_sprite
+        self.load_origin = load_origin
 
 
 class XflSvg:
     def __init__(self, xflsvg_dir: str):
-        self.filepath = os.path.normpath(xflsvg_dir)
-        self.spritemap = SvgSpritemap(f"{self.filepath}/spritemaps")
+        self.filepath = os.path.normpath(xflsvg_dir) # deal with trailing /
+        self.spritemap = SvgSpritemap(self, f"{self.filepath}/spritemaps")
         self.id = os.path.basename(self.filepath)  # MUST come after normpath
         self._assets = {}
-        self._shapes = {}
 
         document_path = os.path.join(xflsvg_dir, "DOMDocument.xml")
         with open(document_path) as document_file:
@@ -612,16 +625,7 @@ class XflSvg:
 
         self.frames = Document(self, document_soup)
 
-    def get_shape(self, asset_id, layer_index, frame_index, path):
-        key = (asset_id, layer_index, frame_index, tuple(path))
-        if key in self._shapes:
-            return self._shapes[key]
-
-        loader = SvgLoader(self.spritemap, asset_id, layer_index, frame_index, path)
-        result = SVGSnapshot(self, key, loader)
-        self._shapes[key] = result
-
-        return result
+    
 
     def get_safe_asset(self, safe_asset_id):
         asset_id = html.unescape(safe_asset_id)
@@ -641,6 +645,9 @@ class XflSvg:
         return self._assets[asset_id]
     
     def render_svg(self, svg_snapshot, *args, **kwargs):
+        pass
+    
+    def on_frame_rendered(self, snapshot, *args, **kwargs):
         pass
     
     def push_transform(self, transformed_snapshot, *args, **kwargs):

@@ -753,14 +753,14 @@ var SymbolExporter = /** @class */ (function () {
                     spritemap['sprites'].push({
                         'id': image.meta.id,
                         'filename': imageName,
-                        'svgprefix': shapeItem.name,
+                        'svgObjectPrefix': shapeItem.name,
                         'x': position.x(),
                         'y': position.y(),
                         'width': position.width(),
                         'height': position.height(),
-                        'transformX': image.meta.transformX,
-                        'transformY': image.meta.transformY,
-                        'applyscale': image.applyScale
+                        'originX': image.meta.transformX,
+                        'originY': image.meta.transformY,
+                        'rescale': image.applyScale
                     });
                 }
             });

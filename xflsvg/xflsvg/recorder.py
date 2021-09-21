@@ -12,59 +12,47 @@ from .xflsvg import TransformedSnapshot, SVGSnapshot, CompositeSnapshot, Layer
 
 TEMPLATE_PATH = f"{os.path.dirname(__file__)}/xfl_template"
 
-class RecordingXflSvg(xflsvg.XflSvg):
+
+class XflSvgRecorder(xflsvg.XflSvg):
     def __init__(self, xflsvg_dir):
         super().__init__(xflsvg_dir)
-        self.shape_snapshots = {}
+        self.shape_xmlnodes = {}
         self.known_assets = set()
         self.known_frames = set()
 
-        self._shapes = []
-        self._assets = []
+        self._pre_shapes = set()
+        self._assets = set()
         self._frames = []
 
         for snapshot in self.frames.snapshots:
-            self._add_frames_recursively(snapshot)
-    
-    
-    def _add_frames_recursively(self, snapshot):
-        pending = [snapshot]
-        while pending:
-            current_snapshot = pending.pop()
-            if current_snapshot.identifier in self.known_frames:
-                raise Exception('invalid file... contains recursive frames')
-            
-            if type(current_snapshot) == SVGSnapshot:
-                self._shapes.append((current_snapshot.identifier, *current_snapshot.path))
-            if type(current_snapshot) == TransformedSnapshot:
-                pending.append(current_snapshot.original)
-                self._frames.append((current_snapshot.identifier, [current_snapshot.original.identifier]))
-            elif type(current_snapshot) == CompositeSnapshot:
-                children = []
-                for child_snapshot in current_snapshot.children:
-                    pending.append(child_snapshot)
-                    children.append(child_snapshot.identifier)
-                
-                if children:
-                    self._frames.append((current_snapshot.identifier, children))
-            
-            if type(current_snapshot.owner) == Layer:
-                asset_id = current_snapshot.owner.asset.id
-                layer_index = current_snapshot.owner.index
-                frame_index = current_snapshot.frame_index
+            snapshot.render()
 
-                asset_path = (asset_id, layer_index, frame_index)
-                if asset_path in self.known_assets:
-                    return
+    def on_frame_rendered(self, snapshot, *args, **kwargs):
+        if snapshot.identifier not in self.known_frames:
+            children = list(map(lambda x: x.identifier, snapshot.children))
+            self._frames.append((snapshot.identifier, children, snapshot.matrix, snapshot.origin))
+            self.known_frames.add(snapshot.identifier)
 
+        if type(snapshot) == SVGSnapshot:
+            self._pre_shapes.add((snapshot.identifier, *snapshot.path))
+            self.shape_xmlnodes[snapshot.path] = snapshot.owner
+
+        if type(snapshot.owner) == Layer:
+            asset_id = snapshot.owner.asset.id
+            layer_index = snapshot.owner.index
+            frame_index = snapshot.frame_index
+
+            asset_path = (asset_id, layer_index, frame_index)
+            if asset_path not in self.known_assets:
                 self.known_assets.add(asset_path)
-                self._assets.append((asset_id, layer_index, frame_index, snapshot.identifier))
+                self._assets.add(
+                    (asset_id, layer_index, frame_index, snapshot.identifier)
+                )
 
-
-    def to_json(self):
-        data = []
-        for index, path in enumerate(self._shapes):
-            data.append(
+    def get_shapes(self):
+        result = []
+        for index, path in enumerate(self.shape_xmlnodes):
+            result.append(
                 {
                     "id": index,
                     "symbol": path[0],
@@ -74,9 +62,9 @@ class RecordingXflSvg(xflsvg.XflSvg):
                 }
             )
 
-        return json.dumps(data, indent=4)
+        return result
 
-    def to_xfl(self, output):
+    def to_shapes_xfl(self, output):
         os.makedirs(output, exist_ok=True)
         try:
             shutil.rmtree(output)
@@ -93,8 +81,8 @@ class RecordingXflSvg(xflsvg.XflSvg):
         element_bundle = base_frame.parent
         soup.DOMFrame.extract()
 
-        for index, path in enumerate(self._shapes):
-            element = self.shape_snapshots[path].owner
+        for index, path in enumerate(self.shape_xmlnodes):
+            element = self.shape_xmlnodes[path]
             clone = copy.copy(base_frame)
             clone["index"] = index
             clone.DOMShape.replace_with(element.xmlnode)
@@ -102,28 +90,36 @@ class RecordingXflSvg(xflsvg.XflSvg):
 
         with open(target_symbol, "w") as output:
             output.write(str(soup.DOMSymbolItem))
-    
+
     def to_pandas(self):
-        shapes = pandas.DataFrame(
-            data=self._shapes,
-            columns=["shapeId", "assetId", "layerIndex", "frameIndex", "elementIndexes"],
+        pre_shapes = pandas.DataFrame(
+            data=self._pre_shapes,
+            columns=[
+                "frameId",
+                "assetId",
+                "layerIndex",
+                "frameIndex",
+                "elementIndexes",
+            ],
         )
-        shapes.set_index('shapeId', inplace=True, drop=True)
+        pre_shapes.set_index("frameId", inplace=True, drop=True)
 
         assets = pandas.DataFrame(
             data=self._assets,
             columns=["assetId", "layerIndex", "frameIndex", "frameId"],
         )
-        assets.set_index(['assetId', 'layerIndex', 'frameIndex'], inplace=True, drop=True)
+        assets.set_index(
+            ["assetId", "layerIndex", "frameIndex"], inplace=True, drop=True
+        )
 
         frames = pandas.DataFrame(
             data=self._frames,
-            columns=["frameId", "childFrameIds"],
+            columns=["frameId", "childFrameIds", "matrix", "origin"],
         )
-        frames.set_index('frameId', inplace=True, drop=True)
+        frames.set_index("frameId", inplace=True, drop=True)
 
         return {
-            'shapes': shapes,
-            'assets': assets,
-            'frames': frames,
+            "pre-shapes": pre_shapes,
+            "assets": assets,
+            "frames": frames,
         }
