@@ -133,6 +133,9 @@ def dump_shapes(args):
             publish_settings.write(data)
 
         recorder = xflsvg.XflSvgRecorder(outp)
+        for snapshot in recorder.frames.snapshots:
+            snapshot.render()
+            
         xflmap = recorder.get_shapes()
 
         shape_xfl_dir = os.path.join(outp, "__ppp_temp")
@@ -153,7 +156,8 @@ def dump_shapes(args):
         os.mkdir(pandas_path)
         tables['frames'].to_parquet(f'{pandas_path}/frames.parquet')
         shape_table.to_parquet(f'{pandas_path}/shapes.parquet')
-        tables['assets'].to_parquet(f'{pandas_path}/assets.parquet')
+        tables['assets'].to_parquet(f'{pandas_path}/assets.data.parquet')
+        tables['documents'].to_parquet(f'{pandas_path}/documents.data.parquet')
 
         shutil.rmtree(shape_xfl_dir)
 

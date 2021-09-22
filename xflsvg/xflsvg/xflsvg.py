@@ -69,11 +69,11 @@ class TransformedSnapshot(Snapshot):
 
 class EmptySnapshot(Snapshot):
     def __init__(self, xflsvg):
-        print('this should not happen')
-        super().__init__(self, xflsvg)
+        super().__init__(xflsvg)
 
     def render(self, *args, **kwargs):
-        self.xflsvg.on_frame_rendered(self, *args, **kwargs)
+        # self.xflsvg.on_frame_rendered(self, *args, **kwargs)
+        pass
 
 class CompositeSnapshot(Snapshot):
     def __init__(self, xflsvg):
@@ -381,17 +381,18 @@ class Layer(AnimationObject):
         self.layer_type = xmlnode.get("layerType", "normal")
         self._snapshots = {}
 
-        for bundle_xmlnode in self.xmlnode.frames.findChildren(recursive=False):
-            new_bundle = ElementBundle(xflsvg, self, bundle_xmlnode)
-            new_bundle.parent = self
-            self.bundles.append(new_bundle)
+        if self.xmlnode.frames:
+            for bundle_xmlnode in self.xmlnode.frames.findChildren(recursive=False):
+                new_bundle = ElementBundle(xflsvg, self, bundle_xmlnode)
+                new_bundle.parent = self
+                self.bundles.append(new_bundle)
 
-            if self.end_frame_index == None:
-                self.end_frame_index = new_bundle.end_frame_index
-            else:
-                self.end_frame_index = max(
-                    self.end_frame_index, new_bundle.end_frame_index
-                )
+                if self.end_frame_index == None:
+                    self.end_frame_index = new_bundle.end_frame_index
+                else:
+                    self.end_frame_index = max(
+                        self.end_frame_index, new_bundle.end_frame_index
+                    )
 
     def __getitem__(self, frame_index: int) -> Snapshot:
         if frame_index in self._snapshots:

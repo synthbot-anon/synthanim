@@ -7,7 +7,7 @@ from bs4 import BeautifulSoup, element
 import pandas
 
 from . import xflsvg
-from .xflsvg import TransformedSnapshot, SVGSnapshot, CompositeSnapshot, Layer
+from .xflsvg import TransformedSnapshot, SVGSnapshot, CompositeSnapshot, Layer, Document
 
 
 TEMPLATE_PATH = f"{os.path.dirname(__file__)}/xfl_template"
@@ -23,9 +23,9 @@ class XflSvgRecorder(xflsvg.XflSvg):
         self._pre_shapes = set()
         self._assets = set()
         self._frames = []
-
-        for snapshot in self.frames.snapshots:
-            snapshot.render()
+        self._document = [
+            (self.frames.id, self.frames.width, self.frames.height)
+        ]
 
     def on_frame_rendered(self, snapshot, *args, **kwargs):
         if snapshot.identifier not in self.known_frames:
@@ -37,7 +37,7 @@ class XflSvgRecorder(xflsvg.XflSvg):
             self._pre_shapes.add((snapshot.identifier, *snapshot.path))
             self.shape_xmlnodes[snapshot.path] = snapshot.owner
 
-        if type(snapshot.owner) == Layer:
+        elif type(snapshot.owner) == Layer:
             asset_id = snapshot.owner.asset.id
             layer_index = snapshot.owner.index
             frame_index = snapshot.frame_index
@@ -48,6 +48,7 @@ class XflSvgRecorder(xflsvg.XflSvg):
                 self._assets.add(
                     (asset_id, layer_index, frame_index, snapshot.identifier)
                 )
+        
 
     def get_shapes(self):
         result = []
@@ -118,8 +119,15 @@ class XflSvgRecorder(xflsvg.XflSvg):
         )
         frames.set_index("frameId", inplace=True, drop=True)
 
+        documents = pandas.DataFrame(
+            data=self._document,
+            columns=['assetId', 'width', 'height']
+        )
+        documents.set_index('assetId', inplace=True, drop=True)
+
         return {
             "pre-shapes": pre_shapes,
             "assets": assets,
             "frames": frames,
+            'documents': documents,
         }

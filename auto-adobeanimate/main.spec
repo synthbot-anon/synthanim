@@ -1,5 +1,5 @@
 # -*- mode: python ; coding: utf-8 -*-
-
+from PyInstaller import compat
 
 block_cipher = None
 
@@ -11,10 +11,10 @@ a = Analysis(['main.py'],
              binaries=[],
              datas=[
                 ("animate-scripts-dist/*.jsfl", "./animate-scripts-dist"),
-                ("animate-tests/*.fla", "./animate-tests"),
-                ("../xflsvg/xflsvg/xfl_template", "./xflsvg/xfl_template")
+                ("../xflsvg/xflsvg/xfl_template", "./xflsvg/xfl_template"),
+                (f"{compat.base_prefix}\\Library\\bin\\mkl_intel_thread.1.dll", "./")
              ],
-             hiddenimports=[],
+             hiddenimports=['fastparquet', 'numpy', 'pandas'],
              hookspath=[],
              runtime_hooks=[],
              excludes=[],
