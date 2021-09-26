@@ -1,4 +1,4 @@
-const commandsDir = `${__dirname}/../auto-adobeanimate/animate-scripts-dist/`;
+const commandsDir = `${__dirname}/../autoanimate/src/autoanimate/animate-scripts-dist/`;
 
 const path = require('path');
 const fs = require('fs');

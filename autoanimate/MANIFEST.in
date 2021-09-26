@@ -1,0 +1,2 @@
+recursive-include src/autoanimate/animate-scripts-dist *
+recursive-include src/autoanimate/animate-tests *

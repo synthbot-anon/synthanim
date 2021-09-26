@@ -17,7 +17,7 @@ import pandas
 import xflsvg
 
 from .config import SynthConfigParser, ConfigArgAction
-from synthrunner import files
+from . import files
 from .i_hate_windows import make_windows_usable
 
 
@@ -135,7 +135,7 @@ def dump_shapes(args):
         recorder = xflsvg.XflSvgRecorder(outp)
         for snapshot in recorder.frames.snapshots:
             snapshot.render()
-            
+
         xflmap = recorder.get_shapes()
 
         shape_xfl_dir = os.path.join(outp, "__ppp_temp")
@@ -629,4 +629,9 @@ the middle."""
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as err:
+        print(err)
+        traceback.print_exc()
+    input('Press any key to continue')

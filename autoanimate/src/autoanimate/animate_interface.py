@@ -15,6 +15,8 @@ from watchdog.events import FileSystemEventHandler
 import msvcrt
 import win32file
 
+SCRIPT_PATH = f"{os.path.dirname(__file__)}/animate-scripts-dist"
+
 
 def _readonly_file(filename):
     try:
@@ -112,7 +114,7 @@ class AnimateInterface:
         self.animate_path = animate_path
 
     def open_animate(self):
-        return self.run_script("./animate-scripts-dist/OpenAnimate.jsfl")
+        return self.run_script(f"{SCRIPT_PATH}/OpenAnimate.jsfl")
 
     def close(self):
         pass
@@ -156,12 +158,12 @@ class AnimateInterface:
 
     def test_animate(self):
         return self.run_script(
-            "./animate-scripts-dist/TestAnimate.jsfl", input="success"
+            f"{SCRIPT_PATH}/TestAnimate.jsfl", input="success"
         )
 
     def dump_symbol_samples(self, sourceFile, outputDir):
         return self.run_script(
-            "./animate-scripts-dist/DumpSymbolSamples.jsfl",
+            f"{SCRIPT_PATH}/DumpSymbolSamples.jsfl",
             sourceFile=os.path.realpath(sourceFile).replace("\\", "/"),
             outputDir=os.path.realpath(outputDir).replace("\\", "/"),
         )
@@ -169,13 +171,13 @@ class AnimateInterface:
     def dump_texture_atlas(self, symbols):
         print(symbols)
         return self.run_script(
-            "./animate-scripts-dist/DumpTextureAtlas.jsfl",
+            f"{SCRIPT_PATH}/DumpTextureAtlas.jsfl",
             symbols=json.dumps(symbols),
         )
 
     def dump_xfl(self, sourceFile, outputFile):
         return self.run_script(
-            "./animate-scripts-dist/DumpXFL.jsfl",
+            f"{SCRIPT_PATH}/DumpXFL.jsfl",
             sourceFile=os.path.realpath(sourceFile).replace("\\", "/"),
             outputFile=os.path.realpath(outputFile)
             .replace("\\", "/")
@@ -184,26 +186,26 @@ class AnimateInterface:
 
     def convert(self, sourceFile, outputDir):
         return self.run_script(
-            "./animate-scripts-dist/Convert.jsfl",
+            f"{SCRIPT_PATH}/Convert.jsfl",
             sourceFile=os.path.realpath(sourceFile).replace("\\", "/"),
             outputDir=os.path.realpath(outputDir).replace("\\", "/"),
         )
 
     def dump_shapes(self, sourceFile, outputDir):
         return self.run_script(
-            "./animate-scripts-dist/DumpShapes.jsfl",
+            f"{SCRIPT_PATH}/DumpShapes.jsfl",
             sourceFile=os.path.realpath(sourceFile).replace("\\", "/"),
             outputDir=os.path.realpath(outputDir).replace("\\", "/"),
         )
 
     def open_file(self, sourceFile):
         return self.run_script(
-            "./animate-scripts-dist/TestFile.jsfl",
+            f"{SCRIPT_PATH}/TestFile.jsfl",
             sourceFile=os.path.realpath(sourceFile).replace("\\", "/"),
         )
 
     def debug(self, sourceFile):
         return self.run_script(
-            "./animate-scripts-dist/Debug.jsfl",
+            f"{SCRIPT_PATH}/Debug.jsfl",
             sourceFile=os.path.realpath(sourceFile).replace("\\", "/"),
         )

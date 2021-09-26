@@ -120,7 +120,7 @@ class DataFrameRenderer:
     def __init__(self, tables_dir, spritemap_dir):
         self.shapes = pandas.read_parquet(f'{tables_dir}/shapes.parquet').drop_duplicates().rename(columns={'svgfilename': 'filename'})
         self.frames = pandas.read_parquet(f'{tables_dir}/frames.parquet')
-        self.assets = pandas.read_parquet(f'{tables_dir}/assets.parquet')
+        self.assets = pandas.read_parquet(f'{tables_dir}/assets.data.parquet')
         self.spritemap = SvgSpritemap(None, spritemap_dir)
 
         self.cached_shapes = {}

@@ -1,1 +1,1 @@
-recursive-include xflsvg/xfl_template *
+recursive-include src/xflsvg/xfl_template *
