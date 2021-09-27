@@ -23,7 +23,6 @@ def png_canvas(path, width, height):
         output = cairo.ImageSurface(cairo.FORMAT_ARGB32, width, height)
         with cairo.Context(output) as context:
             _cairo_context.stack.append(context)
-            context.translate(width * 0.5, height * 0.5)
             yield context
     finally:
         _cairo_context.stack.pop()
@@ -68,25 +67,12 @@ class RenderableSVGSnapshot:
         context.save()
         surface = self.surface
         origin = self.loader.load_origin()
-        context.translate(*origin)
+        if origin:
+            context.translate(*(origin))
         context.translate(-self._width / 2, -self._height / 2)
         context.set_source_surface(self.surface)
         context.paint()
         context.restore()
-
-
-def to_png(self, width, height):
-    output = cairo.ImageSurface(cairo.FORMAT_ARGB32, width, height)
-    with cairo.Context(output) as context:
-        context.translate(width * 0.5, height * 0.5)
-        self.render(context)
-
-    return output.write_to_png(None)
-
-
-
-
-
 
 class XflSvgRenderer(XflSvg):
     def __init__(self, xflsvg_dir) -> None:
@@ -102,6 +88,7 @@ class XflSvgRenderer(XflSvg):
         self.svg_cache[path].render(context)
 
     def push_transform(self, transformed_snapshot, context=None):
+        global _t_count
         context = context or _cairo_context.stack[-1]
         context.save()
 
@@ -118,29 +105,29 @@ class XflSvgRenderer(XflSvg):
 
 class DataFrameRenderer:
     def __init__(self, tables_dir, spritemap_dir):
-        self.shapes = pandas.read_parquet(f'{tables_dir}/shapes.parquet').drop_duplicates().rename(columns={'svgfilename': 'filename'})
+        self.shapes = pandas.read_parquet(f'{tables_dir}/shapes.parquet')
         self.frames = pandas.read_parquet(f'{tables_dir}/frames.parquet')
         self.assets = pandas.read_parquet(f'{tables_dir}/assets.data.parquet')
+        self.documents = pandas.read_parquet(f'{tables_dir}/documents.data.parquet')
         self.spritemap = SvgSpritemap(None, spritemap_dir)
 
         self.cached_shapes = {}
     
     def render_frame(self, frame_id, context=None):
         context = context or _cairo_context.stack[-1]
-        if frame_id in self.shapes.index:
+        if not self.shapes[self.shapes['frameId'] == frame_id].empty:
             self.render_shape(frame_id, context)
             return
         
-        data = self.frames.loc[frame_id]
-        children = data['childFrameIds']
-        matrix = cairo.Matrix(*(data['matrix'] or _IDENTITY_MATRIX))
-        origin = data['origin'] or _ORIGIN_POINT
+        data = self.frames[self.frames['frameId'] == frame_id].iloc[0]
 
         context.save()
-        context.translate(*origin)
-        context.transform(matrix)
+        if data['origin']:
+            context.translate(*data['origin'])
+        if data['matrix']:
+            context.transform(cairo.Matrix(*data['matrix']))
 
-        for child in children[::-1]:
+        for child in data['childFrameIds'][::-1]:
             self.render_frame(child, context)
         
         context.restore()
@@ -152,8 +139,7 @@ class DataFrameRenderer:
             self.cached_shapes[frame_id].render(context)
             return
 
-        data = self.shapes.loc[frame_id]
-        print(data)
+        data = self.shapes[self.shapes['frameId'] == frame_id].iloc[0]
         loader = SvgLoader(
             load_sprite=lambda: self.spritemap.get_sprite_ex(data),
             load_origin=lambda: self.spritemap.get_origin_ex(data))

@@ -12,7 +12,6 @@ from .xflsvg import TransformedSnapshot, SVGSnapshot, CompositeSnapshot, Layer, 
 
 TEMPLATE_PATH = f"{os.path.dirname(__file__)}/xfl_template"
 
-
 class XflSvgRecorder(xflsvg.XflSvg):
     def __init__(self, xflsvg_dir):
         super().__init__(xflsvg_dir)
@@ -37,7 +36,7 @@ class XflSvgRecorder(xflsvg.XflSvg):
             self._pre_shapes.add((snapshot.identifier, *snapshot.path))
             self.shape_xmlnodes[snapshot.path] = snapshot.owner
 
-        elif type(snapshot.owner) == Layer:
+        if type(snapshot.owner) == Layer:
             asset_id = snapshot.owner.asset.id
             layer_index = snapshot.owner.index
             frame_index = snapshot.frame_index
@@ -103,27 +102,21 @@ class XflSvgRecorder(xflsvg.XflSvg):
                 "elementIndexes",
             ],
         )
-        pre_shapes.set_index("frameId", inplace=True, drop=True)
 
         assets = pandas.DataFrame(
             data=self._assets,
             columns=["assetId", "layerIndex", "frameIndex", "frameId"],
-        )
-        assets.set_index(
-            ["assetId", "layerIndex", "frameIndex"], inplace=True, drop=True
         )
 
         frames = pandas.DataFrame(
             data=self._frames,
             columns=["frameId", "childFrameIds", "matrix", "origin"],
         )
-        frames.set_index("frameId", inplace=True, drop=True)
 
         documents = pandas.DataFrame(
             data=self._document,
             columns=['assetId', 'width', 'height']
         )
-        documents.set_index('assetId', inplace=True, drop=True)
 
         return {
             "pre-shapes": pre_shapes,

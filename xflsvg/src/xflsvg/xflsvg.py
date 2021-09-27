@@ -38,10 +38,10 @@ class Snapshot:
         self.owner = None
         self.parent = None
         self.frame_index = -1
-        self.identifier = _snapshot_index
         self.children = []
         self.matrix = None
         self.origin = None
+        self.identifier = _snapshot_index
         _snapshot_index += 1
 
 class SVGSnapshot(Snapshot):
@@ -72,8 +72,7 @@ class EmptySnapshot(Snapshot):
         super().__init__(xflsvg)
 
     def render(self, *args, **kwargs):
-        # self.xflsvg.on_frame_rendered(self, *args, **kwargs)
-        pass
+        return
 
 class CompositeSnapshot(Snapshot):
     def __init__(self, xflsvg):

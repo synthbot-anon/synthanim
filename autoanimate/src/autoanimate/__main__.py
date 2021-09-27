@@ -135,6 +135,7 @@ def dump_shapes(args):
         recorder = xflsvg.XflSvgRecorder(outp)
         for snapshot in recorder.frames.snapshots:
             snapshot.render()
+            break
 
         xflmap = recorder.get_shapes()
 
@@ -208,14 +209,11 @@ def merge_shape_table(xfl_shapes, spritemaps_dir, xflmap):
     )
 
     return (
-        xfl_shapes.reset_index()
-        .merge(
+        xfl_shapes.merge(
             spritemap_dataframe,
             how="left",
             on=["assetId", "layerIndex", "frameIndex", "elementIndexes"],
-        )
-        .set_index("frameId")
-        .drop(columns=["assetId", "layerIndex", "frameIndex", "elementIndexes"])
+        ).drop(columns=["assetId", "layerIndex", "frameIndex", "elementIndexes"])
     )
 
 
