@@ -1,4 +1,5 @@
-from .xflsvg import XflSvg
-from .xflsvg import Snapshot
-from .renderer import XflSvgRenderer
-from .recorder import XflSvgRecorder
+from .xflsvg import XflReader
+from .xflsvg import Frame
+from .renderer import XflRenderer
+
+# from .recorder import XflSvgRecorder

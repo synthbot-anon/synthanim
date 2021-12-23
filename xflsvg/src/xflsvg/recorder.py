@@ -12,7 +12,8 @@ from .xflsvg import TransformedSnapshot, SVGSnapshot, CompositeSnapshot, Layer, 
 
 TEMPLATE_PATH = f"{os.path.dirname(__file__)}/xfl_template"
 
-class XflSvgRecorder(xflsvg.XflSvg):
+
+class XflSvgRecorder(xflsvg.XflReader):
     def __init__(self, xflsvg_dir):
         super().__init__(xflsvg_dir)
         self.shape_xmlnodes = {}
@@ -22,14 +23,14 @@ class XflSvgRecorder(xflsvg.XflSvg):
         self._pre_shapes = set()
         self._assets = set()
         self._frames = []
-        self._document = [
-            (self.frames.id, self.frames.width, self.frames.height)
-        ]
+        self._document = [(self.frames.id, self.frames.width, self.frames.height)]
 
     def on_frame_rendered(self, snapshot, *args, **kwargs):
         if snapshot.identifier not in self.known_frames:
             children = list(map(lambda x: x.identifier, snapshot.children))
-            self._frames.append((snapshot.identifier, children, snapshot.matrix, snapshot.origin))
+            self._frames.append(
+                (snapshot.identifier, children, snapshot.matrix, snapshot.origin)
+            )
             self.known_frames.add(snapshot.identifier)
 
         if type(snapshot) == SVGSnapshot:
@@ -47,7 +48,6 @@ class XflSvgRecorder(xflsvg.XflSvg):
                 self._assets.add(
                     (asset_id, layer_index, frame_index, snapshot.identifier)
                 )
-        
 
     def get_shapes(self):
         result = []
@@ -110,17 +110,16 @@ class XflSvgRecorder(xflsvg.XflSvg):
 
         frames = pandas.DataFrame(
             data=self._frames,
-            columns=["frameId", "childFrameIds", "matrix", "origin"],
+            columns=["frameId", "childFrameIds", "matrix", "origin", "color", "mask"],
         )
 
         documents = pandas.DataFrame(
-            data=self._document,
-            columns=['assetId', 'width', 'height']
+            data=self._document, columns=["assetId", "width", "height"]
         )
 
         return {
             "pre-shapes": pre_shapes,
             "assets": assets,
             "frames": frames,
-            'documents': documents,
+            "documents": documents,
         }

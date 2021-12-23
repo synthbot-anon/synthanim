@@ -54,7 +54,7 @@ synthbot.anon@gmail.com with details on how to download the data.
 
 For exceptions to this license, please contact synthbot.anon@gmail.com.
 ''',
-    packages=['xflsvg'],
+    packages=['xflsvg', 'xflsvg.domshape'],
     package_dir={'': 'src'},
     install_requires=['bs4', 'html5lib', 'lxml', 'pandas', 'fastparquet'],
     include_package_data=True,

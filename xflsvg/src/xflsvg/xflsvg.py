@@ -1,136 +1,282 @@
 """
-A Snapshot is either a single image (given by SVG) or a collection of sub-Snapshots.
-Each sub-Snapshot is defined by an Element and an iteration number.
+A Frame is either a single image (given by SVG) or a collection of sub-Frames.
+Each sub-Frame is defined by an Element and an iteration number.
 
-Snapshots are bundled together by Elements. An Element is a sequence of Snapshots,
+Frames are bundled together by Elements. An Element is a sequence of Frames,
 indexed by iteration. The sequence can go on indefinitely.
 
-Elements are bundled together by SnapshotBundles. A SnapshotBundle is a collection
+Elements are bundled together by FrameBundles. A FrameBundle is a collection
 of Elements that all align to the same iteration number.
 
-SnapshotBundles are bundled together by Layers. A Layer is a sequence of
-SnapshotBundles.
+FrameBundles are bundled together by Layers. A Layer is a sequence of
+FrameBundles.
 
-An Asset is a 2D array of Snapshots, indexed by layer_index and frame_index. Assets
+An Asset is a 2D array of Frames, indexed by layer_index and frame_index. Assets
 are composed of Layers. The main XFL DOMDocument and LIBRARY items are represented
 by Assets. Assets have a fixed number of layers and fixed duration.
 
 """
 
+from contextlib import contextmanager
 import copy
+from dataclasses import dataclass
 from glob import glob
 import json
 import html
 import os
 import re
 import shutil
+import threading
 from typing import Sequence
 
 from bs4 import BeautifulSoup
+import xml.etree.ElementTree as etree
 
-_snapshot_index = 0
+from .domshape import xfl_domshape_to_svg
 
-class Snapshot:
-    def __init__(self, xflsvg):
-        global _snapshot_index
+_frame_index = 0
 
-        self.xflsvg = xflsvg
+
+class Frame:
+    def __init__(self):
+        global _frame_index
+        self.identifier = _frame_index
+        _frame_index += 1
+
         self.owner = None
         self.parent = None
         self.frame_index = -1
         self.children = []
         self.matrix = None
-        self.origin = None
-        self.identifier = _snapshot_index
-        _snapshot_index += 1
+        self.color = None
 
-class SVGSnapshot(Snapshot):
-    def __init__(self, xflsvg, path, loader):
-        super().__init__(xflsvg)
-        self.path = path
-        self.loader = loader
-    
+    def add_child(self, child_frame):
+        self.children.append(child_frame)
+        child_frame.parent = self
+
+    def prepend_child(self, child_frame):
+        self.children.insert(0, child_frame)
+
+
+class ShapeFrame(Frame):
+    def __init__(self, normal_svg, mask_svg):
+        super().__init__()
+        self.normal_svg = normal_svg
+        self.mask_svg = mask_svg
+
     def render(self, *args, **kwargs):
-        self.xflsvg.render_svg(self, *args, **kwargs)
-        self.xflsvg.on_frame_rendered(self, *args, **kwargs)
+        renderer = XflRenderer.current()
+        renderer.render_shape(self, *args, **kwargs)
+        renderer.on_frame_rendered(self, *args, **kwargs)
 
-class TransformedSnapshot(Snapshot):
-    def __init__(self, xflsvg, original, origin=None, matrix=None):
-        super().__init__(xflsvg)
+
+class TransformedFrame(Frame):
+    def __init__(self, original, matrix=None, color=None):
+        super().__init__()
         self.children.append(original)
-        self.origin = origin
         self.matrix = matrix
-    
-    def render(self, *args, **kwargs):
-        self.xflsvg.push_transform(self, *args, **kwargs)
-        self.children[0].render(*args, **kwargs)
-        self.xflsvg.pop_transform(self, *args, **kwargs)
-        self.xflsvg.on_frame_rendered(self, *args, **kwargs)
+        self.color = color
 
-class EmptySnapshot(Snapshot):
-    def __init__(self, xflsvg):
-        super().__init__(xflsvg)
+    def render(self, *args, **kwargs):
+        renderer = XflRenderer.current()
+        renderer.push_transform(self, *args, **kwargs)
+        self.children[0].render(*args, **kwargs)
+        renderer.pop_transform(self, *args, **kwargs)
+        renderer.on_frame_rendered(self, *args, **kwargs)
+
+
+class EmptyFrame(Frame):
+    def __init__(self):
+        super().__init__()
 
     def render(self, *args, **kwargs):
         return
 
-class CompositeSnapshot(Snapshot):
-    def __init__(self, xflsvg):
-        super().__init__(xflsvg)
 
-    def add_child(self, child_snapshot):
-        self.children.append(child_snapshot)
-        child_snapshot.parent = self
+class CompositeFrame(Frame):
+    def __init__(self):
+        super().__init__()
 
     def render(self, *args, **kwargs):
-        for child in self.children[::-1]:
+        renderer = XflRenderer.current()
+
+        for child in self.children:
             child.parent = self
             child.render(*args, **kwargs)
-        
-        self.xflsvg.on_frame_rendered(self, *args, **kwargs)
+
+        renderer.on_frame_rendered(self, *args, **kwargs)
+
+
+class MaskedFrame(Frame):
+    def __init__(self, mask):
+        super().__init__()
+        self.mask = mask
+        mask.parent = self
+
+    def render(self, *args, **kwargs):
+        renderer = XflRenderer.current()
+
+        renderer.push_mask(self, *args, **kwargs)
+        self.mask.render()
+        renderer.pop_mask(self, *args, **kwargs)
+
+        renderer.push_masked_render(self, *args, **kwargs)
+        for child in self.children:
+            child.render()
+        renderer.pop_masked_render(self, *args, **kwargs)
+
+        renderer.on_frame_rendered(self, *args, **kwargs)
 
 
 class AnimationObject(Sequence):
     def __init__(self):
         self.parent = None
 
-    def __getitem__(self, k: int) -> Snapshot:
+    def __getitem__(self, k: int) -> Frame:
         pass
 
     def __len__(self) -> int:
         pass
 
+    def __iter__(self):
+        for i in range(len(self)):
+            yield self[i]
+
+
+@dataclass(frozen=True)
+class ColorObject:
+    mr: float = 1
+    mg: float = 1
+    mb: float = 1
+    ma: float = 1
+    dr: float = 0
+    dg: float = 0
+    db: float = 0
+    da: float = 0
+
+    def __matmul__(self, other):
+        return ColorObject(
+            self.mr * other.mr,
+            self.mg * other.mg,
+            self.mb * other.mb,
+            self.ma * other.ma,
+            self.mr * other.dr + self.dr,
+            self.mg * other.dg + self.dg,
+            self.mb * other.db + self.db,
+            self.ma * other.da + self.da,
+        )
+
+    def is_identity(self):
+        return (
+            self.mr == 1
+            and self.mg == 1
+            and self.mb == 1
+            and self.ma == 1
+            and self.dr == 0
+            and self.dg == 0
+            and self.db == 0
+            and self.da == 0
+        )
+
+    @property
+    def id(self):
+        """Unique ID used to dedup SVG elements in <defs>."""
+        return f"Filter_{hash(self) & 0xFFFFFFFFFFFFFFFF:16x}"
+
 
 def _get_matrix(xmlnode):
-    outer = xmlnode.matrix
+    outer = xmlnode.findChild('matrix', recursive=False)
     if outer == None:
         return None
 
-    inner = outer.Matrix
+    inner = outer.findChild('Matrix', recursive=False)
     if inner == None:
         return None
 
     result = [
-        float(inner.get("a", default=1)),
-        float(inner.get("b", default=0)),
-        float(inner.get("c", default=0)),
-        float(inner.get("d", default=1)),
-        float(inner.get("tx", default=0)),
-        float(inner.get("ty", default=0)),
+        inner.get("a", default="1"),
+        inner.get("b", default="0"),
+        inner.get("c", default="0"),
+        inner.get("d", default="1"),
+        inner.get("tx", default="0"),
+        inner.get("ty", default="0"),
     ]
+
+    if result == ["1", "0", "0", "1", "0", "0"]:
+        return None
+
     return result
 
 
-def _get_origin(xmlnode):
-    outer = xmlnode.transformationPoint
+def _get_color(xmlnode):
+    outer = xmlnode.color
     if outer == None:
         return None
 
-    inner = outer.Point
+    inner = outer.Color
     if inner == None:
         return None
 
-    result = [float(inner.get("x", default=0)), float(inner.get("y", default=0))]
+    inner = inner.attrs
+    result = None
+
+    count = 0
+    if "brightness" in inner:
+        count += 1
+        brightness = float(inner["brightness"])
+        if brightness < 0:
+            # linearly interpolate towards black
+            result = ColorObject(
+                mr=1 + brightness, mg=1 + brightness, mb=1 + brightness,
+            )
+        else:
+            # linearly interpolate towards white
+            result = ColorObject(
+                mr=1 - brightness,
+                mg=1 - brightness,
+                mb=1 - brightness,
+                dr=brightness,
+                dg=brightness,
+                db=brightness,
+            )
+    if "tintMultiplier" in inner or "tintColor" in inner:
+        count += 1
+        # color*(1-tint_multiplier) + tint_color*tint_multiplier
+        tint_multiplier = float(inner.get("tintMultiplier", 0))
+        tint_color = inner.get("tintColor", "#000000")
+
+        result = ColorObject(
+            mr=1 - tint_multiplier,
+            mg=1 - tint_multiplier,
+            mb=1 - tint_multiplier,
+            dr=tint_multiplier * int(tint_color[1:3], 16) / 255,
+            dg=tint_multiplier * int(tint_color[3:5], 16) / 255,
+            db=tint_multiplier * int(tint_color[5:7], 16) / 255,
+        )
+
+    if set(inner.keys()) & {
+        "redMultiplier",
+        "greenMultiplier",
+        "blueMultiplier",
+        "alphaMultiplier",
+        "redOffset",
+        "greenOffset",
+        "blueOffset",
+        "alphaOffset",
+    }:
+        count += 1
+        result = ColorObject(
+            mr=float(inner.get("redMultiplier", 1)),
+            mg=float(inner.get("greenMultiplier", 1)),
+            mb=float(inner.get("blueMultiplier", 1)),
+            ma=float(inner.get("alphaMultiplier", 1)),
+            dr=float(inner.get("redOffset", 0)) / 255,
+            dg=float(inner.get("greenOffset", 0)) / 255,
+            db=float(inner.get("blueOffset", 0)) / 255,
+            da=float(inner.get("alphaOffset", 0)) / 255,
+        )
+
+    assert count < 2
     return result
 
 
@@ -139,10 +285,10 @@ class Element(AnimationObject):
         super().__init__()
         self.xmlnode = xmlnode
         self.matrix = _get_matrix(xmlnode)
-        self.origin = _get_origin(xmlnode)
+        self.color = _get_color(xmlnode)
 
-    def __getitem__(self, k: int) -> Snapshot:
-        result = EmptySnapshot(None)
+    def __getitem__(self, k: int) -> Frame:
+        result = EmptyFrame()
         result.owner = self
         result.frame_index = k
         return result
@@ -158,7 +304,7 @@ class SymbolElement(Element):
         self.first_frame = min(self.asset.frame_count - 1, self.first_frame)
         self.duration = duration
 
-    def __getitem__(self, iteration: int) -> Snapshot:
+    def __getitem__(self, iteration: int) -> Frame:
         if self.loop_type in ("single frame", None):
             frame_index = self.first_frame
         elif self.loop_type == "play once":
@@ -169,9 +315,7 @@ class SymbolElement(Element):
         else:
             raise Exception(f"Unknown loop type: {self.loop_type}")
 
-        result = TransformedSnapshot(
-            self.xflsvg, self.asset[frame_index], self.origin, self.matrix
-        )
+        result = TransformedFrame(self.asset[frame_index], self.matrix, self.color)
         result.owner = self
         result.frame_index = frame_index
         return result
@@ -190,19 +334,15 @@ class ShapeElement(Element):
         self.layer = layer
         self.duration = duration
         self.path = tuple(path)
-        self.svg_snapshot = xflsvg.spritemap.get_shape(
-            asset.id, layer.index, start_frame_index, self.path,
+        self.svg_frame = xflsvg.get_shape(
+            xmlnode, asset.id, layer.index, start_frame_index, self.path,
         )
 
-        # self.origin = None
+        self.svg_frame.owner = self
+        self.svg_frame.frame_index = 0
 
-        self.svg_snapshot.owner = self
-        self.svg_snapshot.frame_index = 0
-
-    def __getitem__(self, iteration: int) -> Snapshot:
-        result = TransformedSnapshot(
-            self.xflsvg, self.svg_snapshot, self.origin, self.matrix
-        )
+    def __getitem__(self, iteration: int) -> Frame:
+        result = TransformedFrame(self.svg_frame, self.matrix, self.color)
         result.owner = self
         result.frame_index = 0
         return result
@@ -226,7 +366,6 @@ class GroupElement(Element, BundleContext):
         self, xflsvg, asset, layer, start_frame_index, duration, path, xmlnode
     ):
         super().__init__(xmlnode)
-
         self.xflsvg = xflsvg
         self.asset = asset
         self.layer = layer
@@ -267,14 +406,14 @@ class GroupElement(Element, BundleContext):
             element.parent = self
             self.elements.append(element)
 
-    def __getitem__(self, iteration: int) -> Snapshot:
-        result = CompositeSnapshot(self.xflsvg)
+    def __getitem__(self, iteration: int) -> Frame:
+        result = CompositeFrame()
         result.owner = self
         result.frame_index = iteration
         for child in self.elements:
             result.add_child(child[iteration])
 
-        result = TransformedSnapshot(self.xflsvg, result, self.origin, self.matrix)
+        result = TransformedFrame(result, None, self.color)
         result.owner = self
         result.frame_index = iteration
         return result
@@ -293,7 +432,7 @@ class ElementBundle(AnimationObject, BundleContext):
         self.start_frame_index = int(xmlnode.get("index"))
         self.duration = int(xmlnode.get("duration", default=1))
         self.end_frame_index = self.start_frame_index + self.duration
-        self._snapshots = {}
+        self._frames = {}
         self.element_index = 0
         self.elements = []
 
@@ -329,29 +468,29 @@ class ElementBundle(AnimationObject, BundleContext):
             element.parent = self
             self.elements.append(element)
 
-    def __getitem__(self, frame_index: int) -> Snapshot:
-        if frame_index in self._snapshots:
-            return self._snapshots[frame_index]
+    def __getitem__(self, frame_index: int) -> Frame:
+        if frame_index in self._frames:
+            return self._frames[frame_index]
 
-        new_snapshot = CompositeSnapshot(self.xflsvg)
+        new_frame = CompositeFrame()
 
         if not self.has_index(frame_index):
-            return new_snapshot
+            return new_frame
 
         iteration = frame_index - self.start_frame_index
-        for element in self.elements[::-1]:
-            new_snapshot.add_child(element[iteration])
+        for element in self.elements:
+            new_frame.add_child(element[iteration])
 
-        self._snapshots[frame_index] = new_snapshot
-        new_snapshot.owner = self
-        new_snapshot.frame_index = frame_index
-        return new_snapshot
+        self._frames[frame_index] = new_frame
+        new_frame.owner = self
+        new_frame.frame_index = frame_index
+        return new_frame
 
     def __len__(self) -> int:
         return self.duration
 
     @property
-    def snapshots(self):
+    def frames(self):
         for i in range(self.start_frame_index, self.end_frame_index):
             yield self[i]
 
@@ -363,6 +502,18 @@ class ElementBundle(AnimationObject, BundleContext):
             return False
 
         return True
+
+
+def _get_mask_layer(asset, xmlnode):
+    layer_index = xmlnode.get("parentLayerIndex", None)
+    if not layer_index:
+        return None
+
+    parent_layer = asset.layers[int(layer_index)]
+    if parent_layer.layer_type == "mask":
+        return parent_layer
+
+    return None
 
 
 class Layer(AnimationObject):
@@ -378,7 +529,8 @@ class Layer(AnimationObject):
         self.bundles = []
         self.end_frame_index = 0
         self.layer_type = xmlnode.get("layerType", "normal")
-        self._snapshots = {}
+        self.mask_layer = _get_mask_layer(asset, xmlnode)
+        self._frames = {}
 
         if self.xmlnode.frames:
             for bundle_xmlnode in self.xmlnode.frames.findChildren(recursive=False):
@@ -393,26 +545,26 @@ class Layer(AnimationObject):
                         self.end_frame_index, new_bundle.end_frame_index
                     )
 
-    def __getitem__(self, frame_index: int) -> Snapshot:
-        if frame_index in self._snapshots:
-            return self._snapshots[frame_index]
+    def __getitem__(self, frame_index: int) -> Frame:
+        if frame_index in self._frames:
+            return self._frames[frame_index]
 
-        new_snapshot = CompositeSnapshot(self.xflsvg)
+        new_frame = CompositeFrame()
         for bundle in self.bundles:
             if bundle.has_index(frame_index):
-                new_snapshot.add_child(bundle[frame_index])
+                new_frame.add_child(bundle[frame_index])
 
-        self._snapshots[frame_index] = new_snapshot
-        new_snapshot.owner = self
-        new_snapshot.frame_index = frame_index
+        self._frames[frame_index] = new_frame
+        new_frame.owner = self
+        new_frame.frame_index = frame_index
 
-        return new_snapshot
+        return new_frame
 
     def __len__(self) -> int:
         return self.end_frame_index
 
     @property
-    def snapshots(self):
+    def frames(self):
         for i in range(self.end_frame_index):
             yield self[i]
 
@@ -423,7 +575,7 @@ class Asset(AnimationObject):
         self.xflsvg = xflsvg
         self.id = id
         self.layers = []
-        self._snapshots = {}
+        self._frames = {}
         self.frame_count = 0
 
         timelines = xmlnode.timelines or xmlnode.timeline
@@ -440,184 +592,53 @@ class Asset(AnimationObject):
             self.layers.append(layer)
             self.frame_count = max(self.frame_count, layer.end_frame_index)
 
-    def __getitem__(self, frame_index: int) -> Snapshot:
-        if frame_index in self._snapshots:
-            return self._snapshots[frame_index]
+    def __getitem__(self, frame_index: int) -> Frame:
+        if frame_index in self._frames:
+            return self._frames[frame_index]
 
-        new_snapshot = CompositeSnapshot(self.xflsvg)
+        new_frame = CompositeFrame()
+        masked_frames = {}
         for layer in self.layers:
-            if layer.layer_type == "normal":
-                new_snapshot.add_child(layer[frame_index])
+            if layer.layer_type == "mask":
+                layer_frame = MaskedFrame(layer[frame_index])
+                masked_frames[layer.index] = layer_frame
+                new_frame.prepend_child(layer_frame)
 
-        self._snapshots[frame_index] = new_snapshot
-        new_snapshot.owner = self
-        new_snapshot.frame_index = frame_index
-        return new_snapshot
+            elif layer.layer_type == "normal":
+                layer_frame = layer[frame_index]
+                if layer.mask_layer:
+                    masked_frames[layer.mask_layer.index].prepend_child(layer_frame)
+                else:
+                    new_frame.prepend_child(layer_frame)
+
+        self._frames[frame_index] = new_frame
+        new_frame.owner = self
+        new_frame.frame_index = frame_index
+        return new_frame
 
     def __len__(self) -> int:
         return self.frame_count
 
     @property
-    def snapshots(self):
+    def frames(self):
         for i in range(self.frame_count):
             yield self[i]
 
 
 class Document(Asset):
     def __init__(self, xflsvg, xmlnode):
-        super().__init__(xflsvg, f'file:///{xflsvg.id}', xmlnode)
+        super().__init__(xflsvg, f"file:///{xflsvg.id}", xmlnode)
         self.width = int(xmlnode.DOMDocument["width"])
         self.height = int(xmlnode.DOMDocument["height"])
+        self.background = xmlnode.DOMDocument.get("backgroundColor", "#FFFFFF")
 
 
-class SvgFile:
-    def __init__(self, filepath):
-        self.filepath = filepath
-
-        with open(filepath) as file:
-            self.root = BeautifulSoup(file, "html5lib")
-
-        self.svg = self.root.svg
-        self.defs = self.svg.defs
-        self.objects = {}
-
-        for asset in self.svg.findChildren("g", recursive=False):
-            obj = asset.find("use")
-            if obj:
-                id = obj["xlink:href"][1:]
-                self.objects[id] = asset
-
-
-class SvgSpritemap:
-    def __init__(self, xflsvg, spritemap_dir: str):
-        self.xflsvg = xflsvg
-        self.filepath = os.path.normpath(spritemap_dir)
-        self._spritemaps = None
-        self._xflmaps = None
-        self._metadata = None
-        self._shapes = {}
-
-    @property
-    def spritemaps(self):
-        if self._spritemaps:
-            return self._spritemaps
-
-        self._spritemaps = {}
-        for spritemap_fn in glob(f"{self.filepath}/spritemap*.svg"):
-            spritemap_id = os.path.basename(spritemap_fn)
-            self._spritemaps[spritemap_id] = SvgFile(spritemap_fn)
-
-        return self._spritemaps
-
-    @property
-    def metadata(self):
-        if self._metadata:
-            return self._metadata
-
-        with open(f"{self.filepath}/spritemap.json") as spritemap_file:
-            spritemap = json.load(spritemap_file)
-
-        with open(f"{self.filepath}/xflmap.json") as xflmap_file:
-            xflmap = json.load(xflmap_file)
-
-        # re-structure the data for easy lookup
-        shapes = {}
-        for shape in xflmap:
-            shape_id = shape["id"]
-            shapes[shape_id] = shape
-
-        # map lookup details to sprite details
-        self._metadata = {}
-        for sprite in spritemap["sprites"]:
-            shape_id = sprite["id"]
-            shape = shapes[shape_id]
-            key = (
-                shape["symbol"],
-                shape["layer"],
-                shape["frame"],
-                tuple(shape["elementIndexes"]),
-            )
-            self._metadata[key] = sprite
-
-        return self._metadata
-    
-    def get_sprite_ex(self, data, buffer=20):
-        sheet = self.spritemaps[data["filename"]]
-
-        root = BeautifulSoup("<svg/>", "html5lib")
-        root.svg.attrs = sheet.svg.attrs.copy()
-        root.svg.attrs["width"] = f'{data["width"]}px'
-        root.svg.attrs["height"] = f'{data["height"]}px'
-
-        left = data["x"] - data["width"] / 2
-        top = data["y"] - data["height"] / 2
-
-        root.svg.attrs["viewBox"] = f"{left} {top} {data['width']} {data['height']}"
-        root.svg.append(sheet.defs)
-
-        prefix = re.sub(r"[^a-zA-Z0-9]", "_", data["svgObjectPrefix"])
-        found = False
-        for id in sheet.objects:
-            if id.startswith(prefix) or id.startswith(f"FL_{prefix}"):
-                found = True
-                root.svg.append(sheet.objects[id])
-
-        if not found:
-            print("unable to find svg for", prefix, "in", data["filename"])
-            return None
-
-        return str(root.svg)
-
-
-    def get_sprite(self, asset_id, layer_index, frame_index, element_index, buffer=20):
-        data = self.metadata.get(
-            (asset_id, layer_index, frame_index, element_index), None
-        )
-        if not data:
-            print("no data for", asset_id, layer_index, frame_index, element_index)
-            return None
-
-        return self.get_sprite_ex(data, buffer)
-    
-    def get_origin_ex(self, data):
-        return data["originX"], data["originY"]
-
-
-    def get_origin(self, asset_id, layer_index, frame_index, element_index):
-        data = self.metadata.get(
-            (asset_id, layer_index, frame_index, element_index), None
-        )
-        if not data:
-            return None
-
-        return self.get_origin_ex(data)
-    
-    def get_shape(self, asset_id, layer_index, frame_index, path):
-        key = (asset_id, layer_index, frame_index, tuple(path))
-        if key in self._shapes:
-            return self._shapes[key]
-
-        loader = SvgLoader(
-            load_sprite=lambda: self.get_sprite(asset_id, layer_index, frame_index, path),
-            load_origin=lambda: self.get_origin(asset_id, layer_index, frame_index, path))
-        result = SVGSnapshot(self.xflsvg, key, loader)
-        self._shapes[key] = result
-
-        return result
-
-
-class SvgLoader:
-    def __init__(self, load_sprite, load_origin):
-        self.load_sprite = load_sprite
-        self.load_origin = load_origin
-
-
-class XflSvg:
+class XflReader:
     def __init__(self, xflsvg_dir: str):
-        self.filepath = os.path.normpath(xflsvg_dir) # deal with trailing /
-        self.spritemap = SvgSpritemap(self, f"{self.filepath}/spritemaps")
+        self.filepath = os.path.normpath(xflsvg_dir)  # deal with trailing /
         self.id = os.path.basename(self.filepath)  # MUST come after normpath
         self._assets = {}
+        self._shapes = {}
 
         document_path = os.path.join(xflsvg_dir, "DOMDocument.xml")
         with open(document_path) as document_file:
@@ -625,15 +646,20 @@ class XflSvg:
 
         self.frames = Document(self, document_soup)
 
-    
-
     def get_safe_asset(self, safe_asset_id):
         asset_id = html.unescape(safe_asset_id)
 
         if asset_id in self._assets:
             return self._assets[asset_id]
 
-        asset_path = os.path.join(self.filepath, "LIBRARY", f"{safe_asset_id}.xml")
+        default_asset_path = os.path.join(
+            self.filepath, "LIBRARY", f"{safe_asset_id}.xml"
+        )
+        if os.path.exists(default_asset_path):
+            asset_path = default_asset_path
+        else:
+            asset_path = default_asset_path.replace("&", "_")
+
         with open(asset_path) as asset_file:
             asset_soup = BeautifulSoup(asset_file, "xml")
 
@@ -642,17 +668,61 @@ class XflSvg:
         return asset
 
     def get_asset(self, asset_id):
-        return self._assets[asset_id]
-    
-    def render_svg(self, svg_snapshot, *args, **kwargs):
+        # return self._assets[asset_id]
+        return self.get_safe_asset(html.escape(asset_id))
+
+    def get_shape(self, xmlnode, asset_id, layer_index, frame_index, path):
+        key = (asset_id, layer_index, frame_index, tuple(path))
+        if key in self._shapes:
+            return self._shapes[key]
+
+        xmlnode = etree.fromstring(str(xmlnode))
+        normal_svg = xfl_domshape_to_svg(xmlnode, False)
+        mask_svg = xfl_domshape_to_svg(xmlnode, True)
+        result = ShapeFrame(normal_svg, mask_svg)
+
+        self._shapes[key] = result
+        return result
+
+
+class XflRenderer:
+    _contexts = threading.local()
+    _contexts.stack = []
+
+    @classmethod
+    def current(cls):
+        if XflRenderer._contexts.stack == []:
+            raise Exception(
+                "render() is only supposed to be called within an XflRenderer context."
+            )
+        return XflRenderer._contexts.stack[-1]
+
+    def render_shape(self, svg_frame, *args, **kwargs):
         pass
-    
-    def on_frame_rendered(self, snapshot, *args, **kwargs):
+
+    def push_transform(self, transformed_frame, *args, **kwargs):
         pass
-    
-    def push_transform(self, transformed_snapshot, *args, **kwargs):
+
+    def pop_transform(self, transformed_frame, *args, **kwargs):
         pass
-    
-    def pop_transform(self, transformed_snapshot, *args, **kwargs):
+
+    def push_mask(self, masked_frame, *args, **kwargs):
         pass
-    
+
+    def pop_mask(self, masked_frame, *args, **kwargs):
+        pass
+
+    def push_masked_render(self, masked_frame, *args, **kwargs):
+        pass
+
+    def pop_masked_render(self, masked_frame, *args, **kwargs):
+        pass
+
+    def on_frame_rendered(self, *args, **kwargs):
+        pass
+
+    def __enter__(self):
+        XflRenderer._contexts.stack.append(self)
+
+    def __exit__(self, *exc):
+        XflRenderer._contexts.stack.pop()
