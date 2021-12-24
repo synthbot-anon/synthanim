@@ -1,19 +1,54 @@
 """
-A Frame is either a single image (given by SVG) or a collection of sub-Frames.
-Each sub-Frame is defined by an Element and an iteration number.
+This class is for parsing and rendering XFL files.
 
-Frames are bundled together by Elements. An Element is a sequence of Frames,
-indexed by iteration. The sequence can go on indefinitely.
+Example usage:
+    
+    xfl = XflReader('/path/to/file.xfl')
+    timeline = xfl.get_timeline('Scene 1')
+    for i, frame in enumerate(timeline):
+        with SvgRenderer(xfl.width, xfl.height) as renderer:
+            frame.render()
+        svg = renderer.compile()
+        with open(f'frame{i}.svg', 'w') as outfile:
+            svg.write(outfile, encoding='unicode')
 
-Elements are bundled together by FrameBundles. A FrameBundle is a collection
-of Elements that all align to the same iteration number.
+Overview of XFL:
+    An XFL file consists of a Document file and Asset files. A Document contains one or
+    more timelines. An Asset contains a single timeline.
+    
+    Each timeline contains one or more layers. Some layers are designated as mask
+    layers, and some layers have parent mask layers. A mask layer, when rendered,
+    defines which portion of child layers should get rendered. Layers are rendered
+    in reverse order.
 
-FrameBundles are bundled together by Layers. A Layer is a sequence of
-FrameBundles.
+    A layer contains one or more element bundles. An element bundle is a collection of
+    elements whose frames follow the same loop length. An element bundle contains one
+    or more frames and one or more elements.
 
-An Asset is a 2D array of Frames, indexed by layer_index and frame_index. Assets
-are composed of Layers. The main XFL DOMDocument and LIBRARY items are represented
-by Assets. Assets have a fixed number of layers and fixed duration.
+    An element can be a symbol, shape, or group. A symbol describes a transformation
+    and how to loop over an asset to generate frames. A shape define a single
+    primitive frame. Shapes are described in Adobe's proprietary format, and they are
+    parsed in the domshape/ package provided by PluieElectrique. A group consists of a
+    collection of other elements that share a transformation.
+
+    A transformation can describe a linear transformation and a translation of pixel
+    positions and colors.
+
+Overview of rendering:
+    The XFLReader class provide is a visitor interface for rendering. Renderers must
+    subclass the XFLReader class and implement the relevant methods. A complete
+    renderer should implement EITHER:
+        render_shape - Render an SVG shape
+        push_transform, pop_transform - Start and end position and color transformations
+        push_mask, pop_mask - Start and end mask definitions
+        push_masked_render, pop_masked_render - Start/end renders with the last mask
+
+    OR
+        on_frame_rendered - Should handle Frame, ShapeFrame, and MaskedFrame
+    
+    The first set of methods are better for actual rendering since they convert the XFL
+    file into a sequence. The second method is better for transforming the data into a
+    new tree-structured format.
 
 """
 
@@ -28,6 +63,7 @@ import re
 import shutil
 import threading
 from typing import Sequence
+import warnings
 
 from bs4 import BeautifulSoup
 import xml.etree.ElementTree as etree
@@ -38,25 +74,36 @@ _frame_index = 0
 
 
 class Frame:
-    def __init__(self):
+    def __init__(self, matrix=None, color=None, children=None):
         global _frame_index
         self.identifier = _frame_index
         _frame_index += 1
 
-        self.owner = None
-        self.parent = None
+        self.matrix = matrix
+        self.color = color
+        self.owner_element = None
+        self.parent_frame = None
         self.frame_index = -1
         self.children = []
-        self.matrix = None
-        self.color = None
 
     def add_child(self, child_frame):
         self.children.append(child_frame)
-        child_frame.parent = self
+        child_frame.parent_frame = self
 
     def prepend_child(self, child_frame):
         self.children.insert(0, child_frame)
+        child_frame.parent_frame = self
+    
+    def render(self, *args, **kwargs):
+        renderer = XflRenderer.current()
+        renderer.push_transform(self, *args, **kwargs)
 
+        for child in self.children:
+            child.render(*args, **kwargs)
+
+        renderer.pop_transform(self, *args, **kwargs)
+        renderer.on_frame_rendered(self, *args, **kwargs)
+    
 
 class ShapeFrame(Frame):
     def __init__(self, normal_svg, mask_svg):
@@ -70,48 +117,17 @@ class ShapeFrame(Frame):
         renderer.on_frame_rendered(self, *args, **kwargs)
 
 
-class TransformedFrame(Frame):
-    def __init__(self, original, matrix=None, color=None):
-        super().__init__()
-        self.children.append(original)
-        self.matrix = matrix
-        self.color = color
-
-    def render(self, *args, **kwargs):
-        renderer = XflRenderer.current()
-        renderer.push_transform(self, *args, **kwargs)
-        self.children[0].render(*args, **kwargs)
-        renderer.pop_transform(self, *args, **kwargs)
-        renderer.on_frame_rendered(self, *args, **kwargs)
-
-
-class EmptyFrame(Frame):
-    def __init__(self):
-        super().__init__()
-
-    def render(self, *args, **kwargs):
-        return
-
-
-class CompositeFrame(Frame):
-    def __init__(self):
-        super().__init__()
-
-    def render(self, *args, **kwargs):
-        renderer = XflRenderer.current()
-
-        for child in self.children:
-            child.parent = self
-            child.render(*args, **kwargs)
-
-        renderer.on_frame_rendered(self, *args, **kwargs)
+def _transformed_frame(original, matrix=None, color=None):
+    result = Frame(matrix, color)
+    result.add_child(original)
+    return result
 
 
 class MaskedFrame(Frame):
     def __init__(self, mask):
         super().__init__()
         self.mask = mask
-        mask.parent = self
+        mask.parent_frame = self
 
     def render(self, *args, **kwargs):
         renderer = XflRenderer.current()
@@ -130,7 +146,7 @@ class MaskedFrame(Frame):
 
 class AnimationObject(Sequence):
     def __init__(self):
-        self.parent = None
+        pass
 
     def __getitem__(self, k: int) -> Frame:
         pass
@@ -209,11 +225,11 @@ def _get_matrix(xmlnode):
 
 
 def _get_color(xmlnode):
-    outer = xmlnode.color
+    outer = xmlnode.findChild('color', recursive=False)
     if outer == None:
         return None
 
-    inner = outer.Color
+    inner = outer.findChild('Color', recursive=False)
     if inner == None:
         return None
 
@@ -227,14 +243,14 @@ def _get_color(xmlnode):
         if brightness < 0:
             # linearly interpolate towards black
             result = ColorObject(
-                mr=1 + brightness, mg=1 + brightness, mb=1 + brightness,
+                mr=1+brightness, mg=1+brightness, mb=1+brightness,
             )
         else:
             # linearly interpolate towards white
             result = ColorObject(
-                mr=1 - brightness,
-                mg=1 - brightness,
-                mb=1 - brightness,
+                mr=1-brightness,
+                mg=1-brightness,
+                mb=1-brightness,
                 dr=brightness,
                 dg=brightness,
                 db=brightness,
@@ -246,9 +262,9 @@ def _get_color(xmlnode):
         tint_color = inner.get("tintColor", "#000000")
 
         result = ColorObject(
-            mr=1 - tint_multiplier,
-            mg=1 - tint_multiplier,
-            mb=1 - tint_multiplier,
+            mr=1-tint_multiplier,
+            mg=1-tint_multiplier,
+            mb=1-tint_multiplier,
             dr=tint_multiplier * int(tint_color[1:3], 16) / 255,
             dg=tint_multiplier * int(tint_color[3:5], 16) / 255,
             db=tint_multiplier * int(tint_color[5:7], 16) / 255,
@@ -288,8 +304,8 @@ class Element(AnimationObject):
         self.color = _get_color(xmlnode)
 
     def __getitem__(self, k: int) -> Frame:
-        result = EmptyFrame()
-        result.owner = self
+        result = Frame()
+        result.owner_element = self
         result.frame_index = k
         return result
 
@@ -315,8 +331,8 @@ class SymbolElement(Element):
         else:
             raise Exception(f"Unknown loop type: {self.loop_type}")
 
-        result = TransformedFrame(self.asset[frame_index], self.matrix, self.color)
-        result.owner = self
+        result = _transformed_frame(self.asset[frame_index], self.matrix, self.color)
+        result.owner_element = self
         result.frame_index = frame_index
         return result
 
@@ -342,8 +358,8 @@ class ShapeElement(Element):
         self.svg_frame.frame_index = 0
 
     def __getitem__(self, iteration: int) -> Frame:
-        result = TransformedFrame(self.svg_frame, self.matrix, self.color)
-        result.owner = self
+        result = _transformed_frame(self.svg_frame, self.matrix, self.color)
+        result.owner_element = self
         result.frame_index = 0
         return result
 
@@ -375,7 +391,7 @@ class GroupElement(Element, BundleContext):
         self.elements = []
 
         for i, element_xmlnode in enumerate(
-            xmlnode.members.findChildren(recursive=False)
+            xmlnode.findChild('members', recursive=False).findChildren(recursive=False)
         ):
             element_type = element_xmlnode.name
             if element_type == "DOMShape":
@@ -403,18 +419,17 @@ class GroupElement(Element, BundleContext):
             else:
                 element = Element(element_xmlnode)
 
-            element.parent = self
+            element.owner_element = self
             self.elements.append(element)
 
     def __getitem__(self, iteration: int) -> Frame:
-        result = CompositeFrame()
-        result.owner = self
+        result = Frame(color=self.color)
+        result.owner_element = self
         result.frame_index = iteration
         for child in self.elements:
             result.add_child(child[iteration])
 
-        result = TransformedFrame(result, None, self.color)
-        result.owner = self
+        result.owner_element = self
         result.frame_index = iteration
         return result
 
@@ -465,14 +480,14 @@ class ElementBundle(AnimationObject, BundleContext):
             else:
                 element = Element(element_xmlnode)
 
-            element.parent = self
+            element.owner_element = self
             self.elements.append(element)
 
     def __getitem__(self, frame_index: int) -> Frame:
         if frame_index in self._frames:
             return self._frames[frame_index]
 
-        new_frame = CompositeFrame()
+        new_frame = Frame()
 
         if not self.has_index(frame_index):
             return new_frame
@@ -482,7 +497,7 @@ class ElementBundle(AnimationObject, BundleContext):
             new_frame.add_child(element[iteration])
 
         self._frames[frame_index] = new_frame
-        new_frame.owner = self
+        new_frame.owner_element = self
         new_frame.frame_index = frame_index
         return new_frame
 
@@ -535,7 +550,7 @@ class Layer(AnimationObject):
         if self.xmlnode.frames:
             for bundle_xmlnode in self.xmlnode.frames.findChildren(recursive=False):
                 new_bundle = ElementBundle(xflsvg, self, bundle_xmlnode)
-                new_bundle.parent = self
+                new_bundle.owner_element = self
                 self.bundles.append(new_bundle)
 
                 if self.end_frame_index == None:
@@ -549,13 +564,13 @@ class Layer(AnimationObject):
         if frame_index in self._frames:
             return self._frames[frame_index]
 
-        new_frame = CompositeFrame()
+        new_frame = Frame()
         for bundle in self.bundles:
             if bundle.has_index(frame_index):
                 new_frame.add_child(bundle[frame_index])
 
         self._frames[frame_index] = new_frame
-        new_frame.owner = self
+        new_frame.owner_element = self
         new_frame.frame_index = frame_index
 
         return new_frame
@@ -570,25 +585,23 @@ class Layer(AnimationObject):
 
 
 class Asset(AnimationObject):
-    def __init__(self, xflsvg, id: str, xmlnode):
+    def __init__(self, xflsvg, id: str, xmlnode, timeline=None):
         super().__init__()
+        print(id)
         self.xflsvg = xflsvg
         self.id = id
         self.layers = []
         self._frames = {}
         self.frame_count = 0
 
-        timelines = xmlnode.timelines or xmlnode.timeline
-        timelines = list(timelines.findChildren(recursive=False))
-        if len(timelines) > 1:
-            raise Exception("this library isn't built to handle multiple timelines")
-
+        timeline = timeline or xmlnode.timeline
+        
         for index, xmlnode in enumerate(
-            timelines[0].layers.findChildren(recursive=False)
+            timeline.layers.findChildren(recursive=False)
         ):
             layer_id = f"{self.id}_L{index}"
             layer = Layer(xflsvg, self, layer_id, index, xmlnode)
-            layer.parent = self
+            layer.owner_element = self
             self.layers.append(layer)
             self.frame_count = max(self.frame_count, layer.end_frame_index)
 
@@ -596,7 +609,7 @@ class Asset(AnimationObject):
         if frame_index in self._frames:
             return self._frames[frame_index]
 
-        new_frame = CompositeFrame()
+        new_frame = Frame()
         masked_frames = {}
         for layer in self.layers:
             if layer.layer_type == "mask":
@@ -612,7 +625,7 @@ class Asset(AnimationObject):
                     new_frame.prepend_child(layer_frame)
 
         self._frames[frame_index] = new_frame
-        new_frame.owner = self
+        new_frame.owner_element = self
         new_frame.frame_index = frame_index
         return new_frame
 
@@ -626,11 +639,21 @@ class Asset(AnimationObject):
 
 
 class Document(Asset):
-    def __init__(self, xflsvg, xmlnode):
-        super().__init__(xflsvg, f"file:///{xflsvg.id}", xmlnode)
-        self.width = int(xmlnode.DOMDocument["width"])
-        self.height = int(xmlnode.DOMDocument["height"])
-        self.background = xmlnode.DOMDocument.get("backgroundColor", "#FFFFFF")
+    def __init__(self, xflsvg, xmlnode, timeline=0):
+        available_timelines = xmlnode.timelines.findChildren('DOMTimeline', recursive=False)
+        if isinstance(timeline, int):
+            dom_timeline = available_timelines[timeline]
+        elif isinstance(timeline, str):
+            for dom_timeline in available_timelines:
+                if dom_timeline.get('name') == timeline:
+                    break
+        
+        assert dom_timeline, 'Unable to find timeline in XFL document'
+        timeline_name = dom_timeline.get('name')
+
+        super().__init__(xflsvg, f"file:///{xflsvg.id}.xfl/{timeline_name}", xmlnode, timeline=dom_timeline)
+    
+        
 
 
 class XflReader:
@@ -642,9 +665,14 @@ class XflReader:
 
         document_path = os.path.join(xflsvg_dir, "DOMDocument.xml")
         with open(document_path) as document_file:
-            document_soup = BeautifulSoup(document_file, "xml")
+            self.xmlnode = BeautifulSoup(document_file, "xml")
 
-        self.frames = Document(self, document_soup)
+        self.width = int(self.xmlnode.DOMDocument["width"])
+        self.height = int(self.xmlnode.DOMDocument["height"])
+        self.background = self.xmlnode.DOMDocument.get("backgroundColor", "#FFFFFF")
+    
+    def get_timeline(self, timeline=0):
+        return Document(self, self.xmlnode, timeline)
 
     def get_safe_asset(self, safe_asset_id):
         asset_id = html.unescape(safe_asset_id)
@@ -668,7 +696,6 @@ class XflReader:
         return asset
 
     def get_asset(self, asset_id):
-        # return self._assets[asset_id]
         return self.get_safe_asset(html.escape(asset_id))
 
     def get_shape(self, xmlnode, asset_id, layer_index, frame_index, path):
@@ -693,7 +720,7 @@ class XflRenderer:
     def current(cls):
         if XflRenderer._contexts.stack == []:
             raise Exception(
-                "render() is only supposed to be called within an XflRenderer context."
+                "render() should only be called within an XflRenderer context."
             )
         return XflRenderer._contexts.stack[-1]
 
@@ -723,6 +750,7 @@ class XflRenderer:
 
     def __enter__(self):
         XflRenderer._contexts.stack.append(self)
+        return self
 
     def __exit__(self, *exc):
         XflRenderer._contexts.stack.pop()
