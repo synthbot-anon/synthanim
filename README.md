@@ -20,7 +20,7 @@ Example usage:
             svg.write(outfile, encoding='unicode')
 
 The XFLReader class provide is a visitor interface for rendering. Renderers
-must subclass the XFLReader class and implement the relevant methods. A
+should subclass the XflRenderer class and implement the relevant methods. A
 complete renderer should implement EITHER:
 
     render_shape - Render an SVG shape

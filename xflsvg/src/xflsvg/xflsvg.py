@@ -35,8 +35,8 @@ Overview of XFL:
     positions and colors.
 
 Overview of rendering:
-    The XFLReader class provide is a visitor interface for rendering. Renderers must
-    subclass the XFLReader class and implement the relevant methods. A complete
+    The XFLReader class provide is a visitor interface for rendering. Renderers should
+    subclass the XflRenderer class and implement the relevant methods. A complete
     renderer should implement EITHER:
         render_shape - Render an SVG shape
         push_transform, pop_transform - Start and end position and color transformations
