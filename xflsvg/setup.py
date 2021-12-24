@@ -9,50 +9,71 @@ setup(
 This library is part of the Pony Preservation Project. It is designed to
 support the development of 2D animation AI. It has three main functions:
 
-    - Support to creation for SVG spritemaps for XFL files. Since there's no
-      publicly-known way to render Adobe's Edge format, this library assumes
-      that Adobe Animate is required to render shape objects. The XflSvgRecorder
-      class simplifies the process by exporting (1) a simplified XFL file
-      containing a single symbol, whose frames contain all of the shapes in the
-      parent XFL files, and (2) a JSON object mapping parent XFL shapes to their
-      location in the simplified XFL file.
-    - Convert XFL files and exported SVG shapes (xflsvg files) into a tabular
-      data format. The tabular data will eventually contain ALL data necessary
-      to fully recreate the original animation, and the data will be
-      hierarchically structured to match the original XFL file. This is done
-      using the XflSvgRecorder class's to_json() and to_xfl() methods.
+    - Support to creation for SVG spritemaps for XFL files.
+    - Convert XFL files into a tabular data format. The tabular data will
+      eventually contain ALL data necessary to fully recreate the original
+      animation, and the data will be hierarchically structured to match the
+      original XFL file.
     - Render tabular animation data. The tabular data may be exported from
-      existing xflsvg files, or they may be programmatically generated. This
-      is done using the XflSvgRenderer class.
+      existing XFL files, or they may be programmatically generated.
 
-This project is currently in an early stage. The xflsvg format will change
-over time as we identify exactly what XFL data is necessary to recreate
+This project is currently in an early stage. The format will change over
+time as we identify exactly what XFL data is necessary to recreate
 animations, as will the rendering code.
 
-If you're using pip to install xflsvg, you'll need to install cairocffi
-and cairosvg to use XflSvgRenderer. If you're using conda to install xflsvg,
-both will be automatically installed. Note that pip doesn't seem to install
-cairocffi properly.
 ''',
     url='https://github.com/synthbot-anon/synthanim',
     author='Synthbot',
     author_email='synthbot.anon@gmail.com',
-    license='''Copyright 2021 Synthbot
+    license='''The domshape/ package is covered by the license from PluieElectrique. It was taken from https://github.com/PluieElectrique/xfl2svg.
+Everything else is covered by the license from Synthbot.
 
-You may only use this project to process publicly-available data. You may not
-use this project to process private or proprietary data. This applies even if
-you are a student or an academic researcher. You may modify any part of this
-project arbitrarily EXCEPT:
+===
+MIT License
 
-    - This license.
-    - Any file explicitly marked as unmodifiable under the license.
-    - Any line of code explicitly marked with the comment "DO NOT MODIFY".
+Copyright (c) 2021 Synthbot, /mlp/ Pony Preservation Project
 
-If you use this project to process non-public data, you must make the data
-publicly available within 30 days of execution, and you must inform
-synthbot.anon@gmail.com with details on how to download the data.
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
 
-For exceptions to this license, please contact synthbot.anon@gmail.com.
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+===
+MIT License
+
+Copyright (c) 2021 PluieElectrique
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
 ''',
     packages=['xflsvg', 'xflsvg.domshape'],
     package_dir={'': 'src'},
