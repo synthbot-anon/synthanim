@@ -73,7 +73,7 @@ instead of files. For example:
 
 # License
 Check the LICENSE file. The xflsvg/domshape/ package is covered by the license
-from PluieElectrique. It was taken from https://github.com/PluieElectrique/xfl2svg.Everything else is covered by the license from Synthbot.
+from PluieElectrique. It was taken from https://github.com/PluieElectrique/xfl2svg. Everything else is covered by the license from Synthbot.
 
 Make sure to follow this part:
 
