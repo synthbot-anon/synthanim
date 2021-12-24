@@ -80,3 +80,14 @@ Make sure to follow this part:
     The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
 
 That applies to both the code and any compiled versions of the code.
+
+# Citations
+~~~
+@software{synth2021anim,
+  author = {Synthbot, PluieElectrique},
+  title = {{SynthAnim - /mlp/ Pony Preservation Project}},
+  url = {https://github.com/synthbot-anon/synthanim},
+  version = {2.0.0},
+  year = {2021}
+}
+~~~
