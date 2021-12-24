@@ -47,11 +47,8 @@ def _color_to_svg_filter(color):
 class SvgRenderer(XflRenderer):
     HREF = ET.QName("http://www.w3.org/1999/xlink", "href")
 
-    def __init__(self, width, height) -> None:
+    def __init__(self) -> None:
         super().__init__()
-        self.width = width
-        self.height = height
-
         self.defs = {}
         self.context = [
             [],
@@ -137,7 +134,7 @@ class SvgRenderer(XflRenderer):
         masked_items = self.context[-1][-1]
         masked_items.extend(children)
 
-    def compile(self):
+    def compile(self, width, height, x=0, y=0):
         svg = ET.Element(
             "svg",
             {
@@ -147,11 +144,11 @@ class SvgRenderer(XflRenderer):
                 "xmlns": "http://www.w3.org/2000/svg",
                 "version": "1.1",
                 "preserveAspectRatio": "none",
-                "x": "-4096px",
-                "y": "-4095px",
-                "width": f"{self.width}px",
-                "height": f"{self.height}px",
-                "viewBox": f"-4096 -4096 {self.width} {self.height}",
+                "x": "{x}px",
+                "y": "{y}px",
+                "width": f"{width}px",
+                "height": f"{height}px",
+                "viewBox": f"0 0 {width} {height}",
             },
         )
 

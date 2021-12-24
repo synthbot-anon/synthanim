@@ -6,9 +6,9 @@ Example usage:
     xfl = XflReader('/path/to/file.xfl')
     timeline = xfl.get_timeline('Scene 1')
     for i, frame in enumerate(timeline):
-        with SvgRenderer(xfl.width, xfl.height) as renderer:
+        with SvgRenderer() as renderer:
             frame.render()
-        svg = renderer.compile()
+        svg = renderer.compile(xfl.width, xfl.height)
         with open(f'frame{i}.svg', 'w') as outfile:
             svg.write(outfile, encoding='unicode')
 
