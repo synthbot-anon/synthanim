@@ -7,6 +7,35 @@ for XFL rendering.
 - autoanimate, which automates Adobe Animate for complex batch processing. autoanimate requires a modded version of Adobe Animate, which is not provided with this repository.
 - animate-scripts, which includes JSFL scripts used by autoanimate.
 
+## xflsvg
+Example usage:
+    
+    xfl = XflReader('/path/to/file.xfl')
+    timeline = xfl.get_timeline('Scene 1')
+    for i, frame in enumerate(timeline):
+        with SvgRenderer() as renderer:
+            frame.render()
+        svg = renderer.compile(xfl.width, xfl.height)
+        with open(f'frame{i}.svg', 'w') as outfile:
+            svg.write(outfile, encoding='unicode')
+
+The XFLReader class provide is a visitor interface for rendering. Renderers
+must subclass the XFLReader class and implement the relevant methods. A
+complete renderer should implement EITHER:
+
+    render_shape - Render an SVG shape
+    push_transform, pop_transform - Start and end position and color transformations
+    push_mask, pop_mask - Start and end mask definitions
+    push_masked_render, pop_masked_render - Start/end renders with the last mask
+
+OR
+
+    on_frame_rendered - Should handle Frame, ShapeFrame, and MaskedFrame
+
+The first set of methods are better for actual rendering since they convert the
+XFL file into a sequence of instructions. The second method is better for
+transforming the data into a new tree-structured format.
+
 ## autoanimate
 ~~~
 setup
@@ -41,35 +70,6 @@ instead of files. For example:
   - This will convert a folder of FLA files, and it will search all sub-
   directories.
 ~~~
-
-## xflsvg
-Example usage:
-    
-    xfl = XflReader('/path/to/file.xfl')
-    timeline = xfl.get_timeline('Scene 1')
-    for i, frame in enumerate(timeline):
-        with SvgRenderer() as renderer:
-            frame.render()
-        svg = renderer.compile(xfl.width, xfl.height)
-        with open(f'frame{i}.svg', 'w') as outfile:
-            svg.write(outfile, encoding='unicode')
-
-The XFLReader class provide is a visitor interface for rendering. Renderers
-must subclass the XFLReader class and implement the relevant methods. A
-complete renderer should implement EITHER:
-
-    render_shape - Render an SVG shape
-    push_transform, pop_transform - Start and end position and color transformations
-    push_mask, pop_mask - Start and end mask definitions
-    push_masked_render, pop_masked_render - Start/end renders with the last mask
-
-OR
-
-    on_frame_rendered - Should handle Frame, ShapeFrame, and MaskedFrame
-
-The first set of methods are better for actual rendering since they convert the
-XFL file into a sequence of instructions. The second method is better for
-transforming the data into a new tree-structured format.
 
 # License
 Check the LICENSE file. The xflsvg/domshape/ package is covered by the license
