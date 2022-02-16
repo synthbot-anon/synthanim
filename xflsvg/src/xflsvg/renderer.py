@@ -38,7 +38,11 @@ def _color_to_svg_filter(color):
     ET.SubElement(
         filter,
         "feColorMatrix",
-        {"in": "SourceGraphic", "type": "matrix", "values": matrix,},
+        {
+            "in": "SourceGraphic",
+            "type": "matrix",
+            "values": matrix,
+        },
     )
 
     return filter

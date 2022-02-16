@@ -69,6 +69,7 @@ from bs4 import BeautifulSoup
 import xml.etree.ElementTree as etree
 
 from .domshape import xfl_domshape_to_svg
+from .easing import *
 
 _frame_index = 0
 
@@ -93,7 +94,7 @@ class Frame:
     def prepend_child(self, child_frame):
         self.children.insert(0, child_frame)
         child_frame.parent_frame = self
-    
+
     def render(self, *args, **kwargs):
         renderer = XflRenderer.current()
         renderer.push_transform(self, *args, **kwargs)
@@ -103,7 +104,7 @@ class Frame:
 
         renderer.pop_transform(self, *args, **kwargs)
         renderer.on_frame_rendered(self, *args, **kwargs)
-    
+
 
 class ShapeFrame(Frame):
     def __init__(self, normal_svg, mask_svg):
@@ -201,11 +202,11 @@ class ColorObject:
 
 
 def _get_matrix(xmlnode):
-    outer = xmlnode.findChild('matrix', recursive=False)
+    outer = xmlnode.findChild("matrix", recursive=False)
     if outer == None:
         return None
 
-    inner = outer.findChild('Matrix', recursive=False)
+    inner = outer.findChild("Matrix", recursive=False)
     if inner == None:
         return None
 
@@ -225,11 +226,11 @@ def _get_matrix(xmlnode):
 
 
 def _get_color(xmlnode):
-    outer = xmlnode.findChild('color', recursive=False)
+    outer = xmlnode.findChild("color", recursive=False)
     if outer == None:
         return None
 
-    inner = outer.findChild('Color', recursive=False)
+    inner = outer.findChild("Color", recursive=False)
     if inner == None:
         return None
 
@@ -243,14 +244,16 @@ def _get_color(xmlnode):
         if brightness < 0:
             # linearly interpolate towards black
             result = ColorObject(
-                mr=1+brightness, mg=1+brightness, mb=1+brightness,
+                mr=1 + brightness,
+                mg=1 + brightness,
+                mb=1 + brightness,
             )
         else:
             # linearly interpolate towards white
             result = ColorObject(
-                mr=1-brightness,
-                mg=1-brightness,
-                mb=1-brightness,
+                mr=1 - brightness,
+                mg=1 - brightness,
+                mb=1 - brightness,
                 dr=brightness,
                 dg=brightness,
                 db=brightness,
@@ -262,9 +265,9 @@ def _get_color(xmlnode):
         tint_color = inner.get("tintColor", "#000000")
 
         result = ColorObject(
-            mr=1-tint_multiplier,
-            mg=1-tint_multiplier,
-            mb=1-tint_multiplier,
+            mr=1 - tint_multiplier,
+            mg=1 - tint_multiplier,
+            mb=1 - tint_multiplier,
             dr=tint_multiplier * int(tint_color[1:3], 16) / 255,
             dg=tint_multiplier * int(tint_color[3:5], 16) / 255,
             db=tint_multiplier * int(tint_color[5:7], 16) / 255,
@@ -296,6 +299,10 @@ def _get_color(xmlnode):
     return result
 
 
+class MotionTween:
+    pass
+
+
 class Element(AnimationObject):
     def __init__(self, xmlnode):
         super().__init__()
@@ -316,18 +323,24 @@ class SymbolElement(Element):
         self.xflsvg = xflsvg
         self.loop_type = xmlnode.get("loop")
         self.asset = xflsvg.get_safe_asset(xmlnode.get("libraryItemName"))
-        self.first_frame = int(xmlnode.get("firstFrame", default=0))
-        self.first_frame = min(self.asset.frame_count - 1, self.first_frame)
+        self.first_frame = (
+            int(xmlnode.get("firstFrame", default=0)) % self.asset.frame_count
+        )
+        self.last_frame = (
+            int(xmlnode.get("lastFrame", default=-1)) % self.asset.frame_count
+        )
         self.duration = duration
 
     def __getitem__(self, iteration: int) -> Frame:
         if self.loop_type in ("single frame", None):
             frame_index = self.first_frame
         elif self.loop_type == "play once":
-            frame_index = min(self.first_frame + iteration, self.asset.frame_count - 1)
+            frame_index = min(self.first_frame + iteration, self.last_frame)
         elif self.loop_type == "loop":
-            loop_size = self.asset.frame_count - self.first_frame
-            frame_index = self.first_frame + (iteration % loop_size)
+            loop_size = (
+                self.asset.frame_count
+            )  # should this take last_frame into account?
+            frame_index = (self.first_frame + iteration) % loop_size
         else:
             raise Exception(f"Unknown loop type: {self.loop_type}")
 
@@ -351,7 +364,11 @@ class ShapeElement(Element):
         self.duration = duration
         self.path = tuple(path)
         self.svg_frame = xflsvg.get_shape(
-            xmlnode, asset.id, layer.index, start_frame_index, self.path,
+            xmlnode,
+            asset.id,
+            layer.index,
+            start_frame_index,
+            self.path,
         )
 
         self.svg_frame.owner = self
@@ -391,7 +408,7 @@ class GroupElement(Element, BundleContext):
         self.elements = []
 
         for i, element_xmlnode in enumerate(
-            xmlnode.findChild('members', recursive=False).findChildren(recursive=False)
+            xmlnode.findChild("members", recursive=False).findChildren(recursive=False)
         ):
             element_type = element_xmlnode.name
             if element_type == "DOMShape":
@@ -450,6 +467,7 @@ class ElementBundle(AnimationObject, BundleContext):
         self._frames = {}
         self.element_index = 0
         self.elements = []
+        self.tweens = xmlnode.tweens and MotionTween(xmlnode)
 
         for i, element_xmlnode in enumerate(
             xmlnode.elements.findChildren(recursive=False)
@@ -595,10 +613,8 @@ class Asset(AnimationObject):
         self.frame_count = 0
 
         timeline = timeline or xmlnode.timeline
-        
-        for index, xmlnode in enumerate(
-            timeline.layers.findChildren(recursive=False)
-        ):
+
+        for index, xmlnode in enumerate(timeline.layers.findChildren(recursive=False)):
             layer_id = f"{self.id}_L{index}"
             layer = Layer(xflsvg, self, layer_id, index, xmlnode)
             layer.owner_element = self
@@ -640,20 +656,25 @@ class Asset(AnimationObject):
 
 class Document(Asset):
     def __init__(self, xflsvg, xmlnode, timeline=0):
-        available_timelines = xmlnode.timelines.findChildren('DOMTimeline', recursive=False)
+        available_timelines = xmlnode.timelines.findChildren(
+            "DOMTimeline", recursive=False
+        )
         if isinstance(timeline, int):
             dom_timeline = available_timelines[timeline]
         elif isinstance(timeline, str):
             for dom_timeline in available_timelines:
-                if dom_timeline.get('name') == timeline:
+                if dom_timeline.get("name") == timeline:
                     break
-        
-        assert dom_timeline, 'Unable to find timeline in XFL document'
-        timeline_name = dom_timeline.get('name')
 
-        super().__init__(xflsvg, f"file:///{xflsvg.id}.xfl/{timeline_name}", xmlnode, timeline=dom_timeline)
-    
-        
+        assert dom_timeline, "Unable to find timeline in XFL document"
+        timeline_name = dom_timeline.get("name")
+
+        super().__init__(
+            xflsvg,
+            f"file:///{xflsvg.id}.xfl/{timeline_name}",
+            xmlnode,
+            timeline=dom_timeline,
+        )
 
 
 class XflReader:
@@ -670,7 +691,7 @@ class XflReader:
         self.width = int(self.xmlnode.DOMDocument["width"])
         self.height = int(self.xmlnode.DOMDocument["height"])
         self.background = self.xmlnode.DOMDocument.get("backgroundColor", "#FFFFFF")
-    
+
     def get_timeline(self, timeline=0):
         return Document(self, self.xmlnode, timeline)
 
