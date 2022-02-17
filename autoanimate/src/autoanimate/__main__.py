@@ -31,11 +31,23 @@ def dump_xfl(args):
     input_files = files.select_source(args, [("FLA file", "*.fla")])
     output_path = files.select_destination(args)
 
-    print_deque(animate.open_animate())
+    # print_deque(animate.open_animate())
 
+    input_files = list(input_files)
+    ignore_prefix = os.path.dirname(os.path.commonprefix(input_files))
+    ignore_prefix_len = len(ignore_prefix)
+    
     for inp in input_files:
-        basename = os.path.splitext(os.path.basename(inp))[0]
-        outp = f"{os.path.join(output_path, basename)}.xfl"
+        relpath = inp[ignore_prefix_len:].lstrip('/\\')
+        reldir = os.path.dirname(relpath)
+        basename = os.path.splitext(os.path.basename(relpath))[0]
+        outp = f"{os.path.join(output_path, reldir, basename)}.xfl"
+        outdir = os.path.dirname(outp)
+
+        if os.path.exists(f'{outdir}/{basename}'):
+            continue
+
+        os.makedirs(outdir, exist_ok=True)
         print_deque(animate.dump_xfl(sourceFile=inp, outputFile=outp))
 
 
@@ -135,7 +147,6 @@ def dump_shapes(args):
         recorder = xflsvg.XflSvgRecorder(outp)
         for snapshot in recorder.frames.snapshots:
             snapshot.render()
-            break
 
         xflmap = recorder.get_shapes()
 
@@ -211,7 +222,7 @@ def merge_shape_table(xfl_shapes, spritemaps_dir, xflmap):
     return (
         xfl_shapes.merge(
             spritemap_dataframe,
-            how="left",
+            how="right",
             on=["assetId", "layerIndex", "frameIndex", "elementIndexes"],
         ).drop(columns=["assetId", "layerIndex", "frameIndex", "elementIndexes"])
     )
