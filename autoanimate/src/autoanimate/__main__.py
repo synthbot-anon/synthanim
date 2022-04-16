@@ -12,6 +12,7 @@ import tempfile
 import time
 import traceback
 import webbrowser
+import sys
 
 import pandas
 import xflsvg
@@ -22,8 +23,12 @@ from .i_hate_windows import make_windows_usable
 
 
 def print_deque(x):
-    for item in x:
-        print(item)
+    try:
+        for item in x:
+            print(item)
+        return True
+    except:
+        return False
 
 
 def dump_xfl(args):
@@ -32,11 +37,38 @@ def dump_xfl(args):
     output_path = files.select_destination(args)
 
     print_deque(animate.open_animate())
+    making_progress = True
 
-    for inp in input_files:
-        basename = os.path.splitext(os.path.basename(inp))[0]
-        outp = f"{os.path.join(output_path, basename)}.xfl"
-        print_deque(animate.dump_xfl(sourceFile=inp, outputFile=outp))
+    while making_progress:
+        making_progress = False
+        known_files = set()
+        for root, dirs, fs in os.walk(output_path):
+            for f in fs:
+                if f.lower().endswith('.xfl'):
+                    known_files.add(os.path.basename(root))
+                    break
+
+        for inp in input_files:
+            try:
+                basename = os.path.splitext(os.path.basename(inp))[0]
+                if basename in known_files:
+                    continue
+                
+                outp = os.path.join(output_path, basename)
+                if not print_deque(animate.dump_xfl(sourceFile=inp, outputFile=f"{outp}.xfl")):
+                    print('Error converting', inp)
+                    continue
+
+                # clear personal data
+                with open(f"{outp}/PublishSettings.xml") as publish_settings:
+                    data = publish_settings.read()
+                data = re.sub(r"\\[^\\]*\\AppData", r"\\anonymous\\AppData", data)
+                with open(f"{outp}/PublishSettings.xml", "w") as publish_settings:
+                    publish_settings.write(data)
+                
+                making_progress = True
+            except:
+                print('Error converting', inp)
 
 
 def dump_texture_atlas(args):
@@ -382,7 +414,7 @@ def setup(args):
     have_animate = input(
         """
 --- ---
-The setup process does four things:
+The setup process does two things:
   1. If needed, walk you through downloading Adobe Animate.
   2. It walks you through downloading the data.
 
@@ -402,7 +434,7 @@ download page? [y/n]
         proceed = input(
             """
 When your browser opens to the page, look for the section titled
-"Visual Studio 2015, 2017 and 2019". [Enter]
+"Visual Studio 2015, 2017, 2019, and 2022". [Enter]
 """
         )
         webbrowser.open(vcpp_location)

@@ -51,7 +51,7 @@ For exceptions to this license, please contact synthbot.anon@gmail.com.
 ''',
     packages=['autoanimate'],
     package_dir={'': 'src'},
-    install_requires=['xflsvg','keyboard', 'pywin32', 'watchdog'],
+    install_requires=['xflsvg','keyboard', 'pywin32==225', 'watchdog'],
     include_package_data=True,
 
     classifiers=[

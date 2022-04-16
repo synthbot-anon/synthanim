@@ -6,6 +6,7 @@ import queue
 import shutil
 import subprocess
 import tempfile
+import time
 import threading
 
 from string import Template
@@ -16,6 +17,7 @@ import msvcrt
 import win32file
 
 SCRIPT_PATH = f"{os.path.dirname(__file__)}/animate-scripts-dist"
+timeout = 60
 
 
 def _readonly_file(filename):
@@ -75,8 +77,12 @@ class ScriptWatcher(FileSystemEventHandler):
     def messages(self):
         unused_data = ""
         seek = 0
+        start_time = time.time()
 
         while True:
+            if time.time() - start_time > timeout:
+                raise Exception('Animate CC seems to have stalled')
+
             next_data = _read_offset(self.ipc, seek)
             seek += len(next_data)
 
