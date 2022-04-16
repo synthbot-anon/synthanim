@@ -317,7 +317,7 @@ class Element(AnimationObject):
         return result
 
 
-class SymbolElement(Element):
+class DOMSymbolInstance(Element):
     def __init__(self, xflsvg, duration, xmlnode):
         super().__init__(xmlnode)
         self.xflsvg = xflsvg
@@ -353,7 +353,7 @@ class SymbolElement(Element):
         return self.duration
 
 
-class ShapeElement(Element):
+class DOMShape(Element):
     def __init__(
         self, xflsvg, asset, layer, start_frame_index, duration, path, xmlnode
     ):
@@ -384,7 +384,7 @@ class ShapeElement(Element):
         return self.duration
 
 
-class BundleContext:
+class FrameContext:
     def __init__(self):
         self.xflsvg = None
         self.asset = None
@@ -394,7 +394,7 @@ class BundleContext:
         self.element_index = 0
 
 
-class GroupElement(Element, BundleContext):
+class DOMGroup(Element, FrameContext):
     def __init__(
         self, xflsvg, asset, layer, start_frame_index, duration, path, xmlnode
     ):
@@ -412,7 +412,7 @@ class GroupElement(Element, BundleContext):
         ):
             element_type = element_xmlnode.name
             if element_type == "DOMShape":
-                element = ShapeElement(
+                element = DOMShape(
                     self.xflsvg,
                     self.asset,
                     self.layer,
@@ -422,9 +422,9 @@ class GroupElement(Element, BundleContext):
                     element_xmlnode,
                 )
             elif element_type == "DOMSymbolInstance":
-                element = SymbolElement(self.xflsvg, self.duration, element_xmlnode)
+                element = DOMSymbolInstance(self.xflsvg, self.duration, element_xmlnode)
             elif element_type == "DOMGroup":
-                element = GroupElement(
+                element = DOMGroup(
                     self.xflsvg,
                     self.asset,
                     self.layer,
@@ -454,7 +454,7 @@ class GroupElement(Element, BundleContext):
         return self.duration
 
 
-class ElementBundle(AnimationObject, BundleContext):
+class DOMFrame(AnimationObject, FrameContext):
     def __init__(self, xflsvg, layer: "Layer", xmlnode):
         super().__init__()
         self.xflsvg = xflsvg
@@ -474,7 +474,7 @@ class ElementBundle(AnimationObject, BundleContext):
         ):
             element_type = element_xmlnode.name
             if element_type == "DOMShape":
-                element = ShapeElement(
+                element = DOMShape(
                     self.xflsvg,
                     self.asset,
                     self.layer,
@@ -484,9 +484,9 @@ class ElementBundle(AnimationObject, BundleContext):
                     element_xmlnode,
                 )
             elif element_type == "DOMSymbolInstance":
-                element = SymbolElement(self.xflsvg, self.duration, element_xmlnode)
+                element = DOMSymbolInstance(self.xflsvg, self.duration, element_xmlnode)
             elif element_type == "DOMGroup":
-                element = GroupElement(
+                element = DOMGroup(
                     self.xflsvg,
                     self.asset,
                     self.layer,
@@ -567,7 +567,7 @@ class Layer(AnimationObject):
 
         if self.xmlnode.frames:
             for bundle_xmlnode in self.xmlnode.frames.findChildren(recursive=False):
-                new_bundle = ElementBundle(xflsvg, self, bundle_xmlnode)
+                new_bundle = DOMFrame(xflsvg, self, bundle_xmlnode)
                 new_bundle.owner_element = self
                 self.bundles.append(new_bundle)
 
