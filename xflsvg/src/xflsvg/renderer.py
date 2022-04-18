@@ -96,7 +96,7 @@ class SvgRenderer(XflRenderer):
             transformed_snapshot.matrix
             and transformed_snapshot.matrix != _IDENTITY_MATRIX
         ):
-            matrix = " ".join(transformed_snapshot.matrix)
+            matrix = " ".join([str(x) for x in transformed_snapshot.matrix])
             transform_data["transform"] = f"matrix({matrix})"
 
         if self.mask_depth == 0:
@@ -152,7 +152,7 @@ class SvgRenderer(XflRenderer):
                 "y": f"{y}px",
                 "width": f"{width}px",
                 "height": f"{height}px",
-                "viewBox": f"0 0 {width} {height}",
+                "viewBox": f"{x} {y} {width} {height}",
             },
         )
 

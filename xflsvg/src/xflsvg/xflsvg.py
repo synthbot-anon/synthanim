@@ -54,22 +54,23 @@ Overview of rendering:
 
 from contextlib import contextmanager
 import copy
-from dataclasses import dataclass
 from glob import glob
 import json
 import html
+from multiprocessing import context
 import os
 import re
 import shutil
 import threading
 from typing import Sequence
 import warnings
-
+from .tweens import matrix_interpolation, color_interpolation, shape_interpolation
+from .util import ColorObject
 from bs4 import BeautifulSoup
 import xml.etree.ElementTree as etree
 
 from .domshape import xfl_domshape_to_svg
-from .easing import *
+from . import easing
 
 _frame_index = 0
 
@@ -160,45 +161,6 @@ class AnimationObject(Sequence):
             yield self[i]
 
 
-@dataclass(frozen=True)
-class ColorObject:
-    mr: float = 1
-    mg: float = 1
-    mb: float = 1
-    ma: float = 1
-    dr: float = 0
-    dg: float = 0
-    db: float = 0
-    da: float = 0
-
-    def __matmul__(self, other):
-        return ColorObject(
-            self.mr * other.mr,
-            self.mg * other.mg,
-            self.mb * other.mb,
-            self.ma * other.ma,
-            self.mr * other.dr + self.dr,
-            self.mg * other.dg + self.dg,
-            self.mb * other.db + self.db,
-            self.ma * other.da + self.da,
-        )
-
-    def is_identity(self):
-        return (
-            self.mr == 1
-            and self.mg == 1
-            and self.mb == 1
-            and self.ma == 1
-            and self.dr == 0
-            and self.dg == 0
-            and self.db == 0
-            and self.da == 0
-        )
-
-    @property
-    def id(self):
-        """Unique ID used to dedup SVG elements in <defs>."""
-        return f"Filter_{hash(self) & 0xFFFFFFFFFFFFFFFF:16x}"
 
 
 def _get_matrix(xmlnode):
@@ -211,15 +173,15 @@ def _get_matrix(xmlnode):
         return None
 
     result = [
-        inner.get("a", default="1"),
-        inner.get("b", default="0"),
-        inner.get("c", default="0"),
-        inner.get("d", default="1"),
-        inner.get("tx", default="0"),
-        inner.get("ty", default="0"),
+        float(inner.get("a", default=1)),
+        float(inner.get("b", default=0)),
+        float(inner.get("c", default=0)),
+        float(inner.get("d", default=1)),
+        float(inner.get("tx", default=0)),
+        float(inner.get("ty", default=0)),
     ]
 
-    if result == ["1", "0", "0", "1", "0", "0"]:
+    if result == [1, 0, 0, 1, 0, 0]:
         return None
 
     return result
@@ -299,9 +261,6 @@ def _get_color(xmlnode):
     return result
 
 
-class MotionTween:
-    pass
-
 
 class Element(AnimationObject):
     def __init__(self, xmlnode):
@@ -353,12 +312,14 @@ class DOMSymbolInstance(Element):
         return self.duration
 
 
+
 class DOMShape(Element):
     def __init__(
         self, xflsvg, asset, layer, start_frame_index, duration, path, xmlnode
     ):
         super().__init__(xmlnode)
         self.xflsvg = xflsvg
+        self.xmlnode = xmlnode
         self.asset = asset
         self.layer = layer
         self.duration = duration
@@ -373,11 +334,11 @@ class DOMShape(Element):
 
         self.svg_frame.owner = self
         self.svg_frame.frame_index = 0
-
+    
     def __getitem__(self, iteration: int) -> Frame:
         result = _transformed_frame(self.svg_frame, self.matrix, self.color)
-        result.owner_element = self
         result.frame_index = 0
+        result.owner_element = self
         return result
 
     def __len__(self) -> int:
@@ -453,6 +414,100 @@ class DOMGroup(Element, FrameContext):
     def __len__(self) -> int:
         return self.duration
 
+def _get_eases(xmlnode):
+    nop = easing.classicEase(0)
+
+    tweens = xmlnode.findChildren('tweens', recursive=False)
+    if not tweens:
+        return {
+            'position': nop,
+            'rotation': nop,
+            'scale': nop,
+            'color': nop,
+            'filters': nop,
+        }
+    
+    tweens = tweens[0]
+    result = {}
+
+    for ease in tweens.findChildren('CustomEase'):
+        xml_points = ease.findChildren('Point')
+        parsed_points = [easing.Point(float(x.get('x', 0)), float(x.get('y', 0))) for x in xml_points]
+        curve = easing.BezierPath(parsed_points)
+
+        target = ease.get('target')
+        if target != 'all':
+            result[target] = curve
+            continue
+        
+        result.setdefault('position', curve)
+        result.setdefault('rotation', curve)
+        result.setdefault('scale', curve)
+        result.setdefault('color', curve)
+        result.setdefault('filters', curve)
+
+    for ease in tweens.findChildren('Ease'):
+        method = ease.get('method', None)
+        intensity = ease.get('intensity', None)
+
+        if method and intensity:
+            raise Exception('should only specify one of method or acceleration for a tween')
+        
+        if intensity:
+            curve = easing.classicEase(float(intensity))
+        else:
+            assert method
+            curve = easing.customEases[method]
+        
+        target = ease.get('target')
+        if target != 'all':
+            result.setdefault(target, curve)
+            continue
+        
+        result.setdefault('position', curve)
+        result.setdefault('rotation', curve)
+        result.setdefault('scale', curve)
+        result.setdefault('color', curve)
+        result.setdefault('filters', curve)
+    
+    result.setdefault('position', nop)
+    result.setdefault('rotation', nop)
+    result.setdefault('scale', nop)
+    result.setdefault('color', nop)
+    result.setdefault('filters', nop)
+    
+    return result
+
+
+def shape_tween(domshape, svg_frames):
+    @contextmanager
+    def _tween(n):
+        initial_frame = domshape.svg_frame
+        try:
+            domshape.svg_frame = svg_frames[n]
+            yield
+        finally:
+            domshape.svg_frame = initial_frame
+    return _tween
+
+
+def motion_tween(domsymbol, matrices, colors):
+    @contextmanager
+    def _tween(n):
+        initial_matrix = domsymbol.matrix
+        initial_color = domsymbol.color
+        try:
+            domsymbol.matrix = matrices[n]
+            domsymbol.color = colors[n]
+            yield
+        finally:
+            domsymbol.matrix = initial_matrix
+            domsymbol.color = initial_color
+    return _tween
+
+@contextmanager
+def trivial_tween(*args):
+    yield
 
 class DOMFrame(AnimationObject, FrameContext):
     def __init__(self, xflsvg, layer: "Layer", xmlnode):
@@ -467,10 +522,12 @@ class DOMFrame(AnimationObject, FrameContext):
         self._frames = {}
         self.element_index = 0
         self.elements = []
-        self.tweens = xmlnode.tweens and MotionTween(xmlnode)
+        self.tween_type = xmlnode.get('tweenType', None)
+        self.eases = None
+        self.tween = trivial_tween
 
         for i, element_xmlnode in enumerate(
-            xmlnode.elements.findChildren(recursive=False)
+            self.xmlnode.elements.findChildren(recursive=False)
         ):
             element_type = element_xmlnode.name
             if element_type == "DOMShape":
@@ -500,6 +557,53 @@ class DOMFrame(AnimationObject, FrameContext):
 
             element.owner_element = self
             self.elements.append(element)
+    
+    def init_tween(self, nextFrame):
+        if not self.elements:
+            return
+        if not nextFrame.elements:
+            return
+        if self.duration <= 2:
+            return
+
+        self.eases = _get_eases(self.xmlnode)
+
+        if self.tween_type == 'motion':
+            start_element = list(filter(lambda x: isinstance(x, Element), self.elements))
+            end_element = list(filter(lambda x: isinstance(x, Element), nextFrame.elements))
+            assert len(start_element) == 1, self.xmlnode
+            assert len(end_element) == 1, nextFrame.xmlnode
+            start_element = start_element[0]
+            end_element = end_element[0]
+
+            matrices = list(matrix_interpolation(start_element.matrix, end_element.matrix, self.duration+1, self.eases))
+            # colors = list(color_interpolation(start_element.color, end_element.color, self.duration+1, self.eases))
+            colors = [start_element.color] * len(matrices)
+            self.tween = motion_tween(start_element, matrices, colors)
+            return
+        elif self.tween_type == 'shape':
+            start_element = list(filter(lambda x: isinstance(x, DOMShape), self.elements))
+            end_element = list(filter(lambda x: isinstance(x, DOMShape), nextFrame.elements))
+            assert len(start_element) == 1, self.xmlnode
+            assert len(end_element) == 1, nextFrame.xmlnode
+            start_element = start_element[0]
+            end_element = end_element[0]
+
+            segment_xmlnode = self.xmlnode.findChildren('MorphSegment')[-1]
+            shape_data = list(shape_interpolation(segment_xmlnode, start_element, end_element, self.duration+1, self.eases))
+            shapes = []
+            for i, data in enumerate(shape_data):
+                shapes.append(self.xflsvg.get_shape(
+                    data,
+                    self.asset.id,
+                    self.layer.index,
+                    self.start_frame_index + i,
+                    (0,),
+                ))
+            self.tween = shape_tween(start_element, shapes)
+            return
+
+        raise Exception('cannot init tween with tween_type ==', self.tween_type)
 
     def __getitem__(self, frame_index: int) -> Frame:
         if frame_index in self._frames:
@@ -511,8 +615,9 @@ class DOMFrame(AnimationObject, FrameContext):
             return new_frame
 
         iteration = frame_index - self.start_frame_index
-        for element in self.elements:
-            new_frame.add_child(element[iteration])
+        with self.tween(iteration):
+            for element in self.elements:
+                new_frame.add_child(element[iteration])
 
         self._frames[frame_index] = new_frame
         new_frame.owner_element = self
@@ -537,6 +642,7 @@ class DOMFrame(AnimationObject, FrameContext):
         return True
 
 
+
 def _get_mask_layer(asset, xmlnode):
     layer_index = xmlnode.get("parentLayerIndex", None)
     if not layer_index:
@@ -559,7 +665,7 @@ class Layer(AnimationObject):
         self.xmlnode = xmlnode
         self.name = xmlnode.get("name", None)
         self.visible = xmlnode.get("visible", "true") != "false"
-        self.bundles = []
+        self.domframes = []
         self.end_frame_index = 0
         self.layer_type = xmlnode.get("layerType", "normal")
         self.mask_layer = _get_mask_layer(asset, xmlnode)
@@ -567,23 +673,27 @@ class Layer(AnimationObject):
 
         if self.xmlnode.frames:
             for bundle_xmlnode in self.xmlnode.frames.findChildren(recursive=False):
-                new_bundle = DOMFrame(xflsvg, self, bundle_xmlnode)
-                new_bundle.owner_element = self
-                self.bundles.append(new_bundle)
+                new_domframe = DOMFrame(xflsvg, self, bundle_xmlnode)
+                new_domframe.owner_element = self
+                self.domframes.append(new_domframe)
 
                 if self.end_frame_index == None:
-                    self.end_frame_index = new_bundle.end_frame_index
+                    self.end_frame_index = new_domframe.end_frame_index
                 else:
                     self.end_frame_index = max(
-                        self.end_frame_index, new_bundle.end_frame_index
+                        self.end_frame_index, new_domframe.end_frame_index
                     )
+        
+        for prev_frame, next_frame in zip(self.domframes[:-1], self.domframes[1:]):
+            if prev_frame.tween_type:
+                prev_frame.init_tween(next_frame)
 
     def __getitem__(self, frame_index: int) -> Frame:
         if frame_index in self._frames:
             return self._frames[frame_index]
 
         new_frame = Frame()
-        for bundle in self.bundles:
+        for bundle in self.domframes:
             if bundle.has_index(frame_index):
                 new_frame.add_child(bundle[frame_index])
 
@@ -717,7 +827,7 @@ class XflReader:
         return asset
 
     def get_asset(self, asset_id):
-        return self.get_safe_asset(html.escape(asset_id))
+        return self.get_safe_asset(html.escape(asset_id).replace('*', '&#042'))
 
     def get_shape(self, xmlnode, asset_id, layer_index, frame_index, path):
         key = (asset_id, layer_index, frame_index, tuple(path))

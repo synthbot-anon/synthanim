@@ -1,5 +1,3 @@
-from matplotlib import pyplot as plt
-
 
 class Variable:
     def _wrap_io(fn):
@@ -77,13 +75,6 @@ class Bezier:
     def __call__(self, t):
         return Point(self.eqn.x(t), self.eqn.y(t))
 
-    def plot(self):
-        pts = [self(t / 100) for t in range(100)]
-        x = [p.x for p in pts]
-        y = [p.y for p in pts]
-        plt.plot(x, y, "k.")
-        plt.show
-
 
 class BezierPath:
     def __init__(self, points):
@@ -109,15 +100,6 @@ class BezierPath:
 
         frac = (t - self.pts[i - 1].x) / (self.pts[i].x - self.pts[i - 1].x)
         return self.curves[i - 1](frac)
-
-    def plot(self):
-        pts = [self(t / 1000) for t in range(1000)]
-        x = [p.x for p in pts]
-        y = [p.y for p in pts]
-        plt.figure()
-        plt.plot(x, y, "k.")
-        plt.show()
-        plt.close()
 
 
 def classicEase(intensity):
