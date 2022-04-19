@@ -1,16 +1,13 @@
-from numpy.lib.twodim_base import mask_indices
-from .xflsvg import Frame
-from .xflsvg import XflReader, XflRenderer, Layer
-import pandas
-from contextlib import contextmanager
-import threading
 import xml.etree.ElementTree as ET
 
+from .xflsvg import XflReader, XflRenderer
+from .domshape.shape import xfl_domshape_to_svg
+
 _EMPTY_SVG = '<svg height="1px" width="1px" viewBox="0 0 1 1" />'
-_IDENTITY_MATRIX = ["1", "0", "0", "1", "0", "0"]
+_IDENTITY_MATRIX = [1, 0, 0, 1, 0, 0]
 
 
-def _color_to_svg_filter(color):
+def color_to_svg_filter(color):
     # fmt: off
     matrix = (
         "{0} 0 0 0 {4} "
@@ -59,13 +56,22 @@ class SvgRenderer(XflRenderer):
         ]
 
         self.mask_depth = 0
-        self.cache = {}
+        self.shape_cache = {}
+        self.mask_cache = {}
 
     def render_shape(self, shape_snapshot, *args, **kwargs):
         if self.mask_depth == 0:
-            fill_g, stroke_g, extra_defs = shape_snapshot.normal_svg
+            svg = self.shape_cache.get(shape_snapshot.identifier, None)
+            if not svg:
+                svg = xfl_domshape_to_svg(shape_snapshot.domshape, False)
+                self.shape_cache[shape_snapshot.identifier] = svg
         else:
-            fill_g, stroke_g, extra_defs = shape_snapshot.mask_svg
+            svg = self.mask_cache.get(shape_snapshot.identifier, None)
+            if not svg:
+                svg = xfl_domshape_to_svg(shape_snapshot.domshape, True)
+                self.mask_cache[shape_snapshot.identifier] = svg
+        
+        fill_g, stroke_g, extra_defs = svg
 
         self.defs.update(extra_defs)
         id = f"Shape{shape_snapshot.identifier}"
@@ -102,7 +108,7 @@ class SvgRenderer(XflRenderer):
         if self.mask_depth == 0:
             color = transformed_snapshot.color
             if color and not color.is_identity():
-                filter_element = _color_to_svg_filter(transformed_snapshot.color)
+                filter_element = color_to_svg_filter(transformed_snapshot.color)
                 self.defs[color.id] = filter_element
                 transform_data["filter"] = f"url(#{color.id})"
 
@@ -163,49 +169,3 @@ class SvgRenderer(XflRenderer):
         # svg.extend(item)
 
         return ET.ElementTree(svg)
-
-
-class DataFrameRenderer:
-    def __init__(self, tables_dir, spritemap_dir):
-        self.shapes = pandas.read_parquet(f"{tables_dir}/shapes.parquet")
-        self.frames = pandas.read_parquet(f"{tables_dir}/frames.parquet")
-        self.assets = pandas.read_parquet(f"{tables_dir}/assets.data.parquet")
-        self.documents = pandas.read_parquet(f"{tables_dir}/documents.data.parquet")
-        self.spritemap = SvgSpritemap(None, spritemap_dir)
-
-        self.cached_shapes = {}
-
-    def render_frame(self, frame_id, context=None):
-        context = context or _cairo_context.stack[-1]
-        if not self.shapes[self.shapes["frameId"] == frame_id].empty:
-            self.render_shape(frame_id, context)
-            return
-
-        data = self.frames[self.frames["frameId"] == frame_id].iloc[0]
-
-        context.save()
-        if data["origin"]:
-            context.translate(*data["origin"])
-        if data["matrix"]:
-            context.transform(cairo.Matrix(*data["matrix"]))
-
-        for child in data["childFrameIds"][::-1]:
-            self.render_frame(child, context)
-
-        context.restore()
-
-    def render_shape(self, frame_id, context=None):
-        context = context or _cairo_context.stack[-1]
-        if frame_id in self.cached_shapes:
-            self.cached_shapes[frame_id].render(context)
-            return
-
-        data = self.shapes[self.shapes["frameId"] == frame_id].iloc[0]
-        loader = SvgLoader(
-            load_sprite=lambda: self.spritemap.get_sprite_ex(data),
-            load_origin=lambda: self.spritemap.get_origin_ex(data),
-        )
-        result = RenderableSVGSnapshot(loader)
-        self.cached_shapes[frame_id] = result
-
-        result.render(context)

@@ -170,10 +170,9 @@ def _parse_number(num: str) -> float:
         # Pad to 8 digits
         hex_num = "{:>06}{:<02}".format(*parts)
         num = int.from_bytes(bytes.fromhex(hex_num), "big", signed=True)
-        # Account for hex scaling and Animate's 20x scaling
         return num
     else:
-        # Decimal number. Account for Animate's 20x scaling
+        # Account for hex un-scaling
         return float(num) * 256
 
 def _get_start_point(shape):
@@ -188,7 +187,6 @@ def _get_start_point(shape):
 
 def _parse_coord(coord):
     x, y = coord.split(', ')
-    print(x, y)
     return _parse_number(x), _parse_number(y)
 
 def shape_interpolation(segment_xmlnode, start, end, n_frames, ease):

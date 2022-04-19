@@ -119,6 +119,7 @@ Animate might clip some of these between 0 and 1. This isn't handled at the
 moment. Clipping would affect the back* and elastic* eases.
 """
 customEases = {
+    "none": classicEase(0),
     "quadIn": BezierPath(
         [Point(0, 0), Point(0.55, 0.085), Point(0.68, 0.53), Point(1, 1)]
     ),

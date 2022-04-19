@@ -20,6 +20,7 @@ def xfl_domshape_to_svg(domshape, mask=False):
         SVG <g> element containing stroked <path>s
         dict of extra elements to put in <defs> (e.g. filters and gradients)
     """
+    domshape = ET.fromstring(domshape)
     extra_defs = {}
 
     fill_styles = {}

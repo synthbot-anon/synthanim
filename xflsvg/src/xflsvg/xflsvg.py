@@ -64,16 +64,19 @@ import shutil
 import threading
 from typing import Sequence
 import warnings
-from .tweens import matrix_interpolation, color_interpolation, shape_interpolation
-from .util import ColorObject
 from bs4 import BeautifulSoup
-import xml.etree.ElementTree as etree
 
-from .domshape import xfl_domshape_to_svg
+from .util import ColorObject
+from .tweens import matrix_interpolation, color_interpolation, shape_interpolation
 from . import easing
 
 _frame_index = 0
 
+def consume_frame_identifier():
+    global _frame_index
+    result = _frame_index
+    _frame_index += 1
+    return result
 
 class Frame:
     def __init__(self, matrix=None, color=None, children=None):
@@ -86,7 +89,7 @@ class Frame:
         self.owner_element = None
         self.parent_frame = None
         self.frame_index = -1
-        self.children = []
+        self.children = children or []
 
     def add_child(self, child_frame):
         self.children.append(child_frame)
@@ -108,10 +111,9 @@ class Frame:
 
 
 class ShapeFrame(Frame):
-    def __init__(self, normal_svg, mask_svg):
+    def __init__(self, domshape):
         super().__init__()
-        self.normal_svg = normal_svg
-        self.mask_svg = mask_svg
+        self.domshape = domshape
 
     def render(self, *args, **kwargs):
         renderer = XflRenderer.current()
@@ -126,8 +128,8 @@ def _transformed_frame(original, matrix=None, color=None):
 
 
 class MaskedFrame(Frame):
-    def __init__(self, mask):
-        super().__init__()
+    def __init__(self, mask, children=None):
+        super().__init__(children=children)
         self.mask = mask
         mask.parent_frame = self
 
@@ -453,11 +455,10 @@ def _get_eases(xmlnode):
         if method and intensity:
             raise Exception('should only specify one of method or acceleration for a tween')
         
-        if intensity:
-            curve = easing.classicEase(float(intensity))
-        else:
-            assert method
+        if method:
             curve = easing.customEases[method]
+        elif intensity:
+            curve = easing.classicEase(float(intensity))
         
         target = ease.get('target')
         if target != 'all':
@@ -715,7 +716,7 @@ class Layer(AnimationObject):
 class Asset(AnimationObject):
     def __init__(self, xflsvg, id: str, xmlnode, timeline=None):
         super().__init__()
-        print(id)
+        print('loading', id)
         self.xflsvg = xflsvg
         self.id = id
         self.layers = []
@@ -834,11 +835,7 @@ class XflReader:
         if key in self._shapes:
             return self._shapes[key]
 
-        xmlnode = etree.fromstring(str(xmlnode))
-        normal_svg = xfl_domshape_to_svg(xmlnode, False)
-        mask_svg = xfl_domshape_to_svg(xmlnode, True)
-        result = ShapeFrame(normal_svg, mask_svg)
-
+        result = ShapeFrame(str(xmlnode))
         self._shapes[key] = result
         return result
 
