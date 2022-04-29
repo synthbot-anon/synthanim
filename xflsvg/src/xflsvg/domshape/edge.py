@@ -393,8 +393,6 @@ def xfl_edge_to_svg_path(
     shapes = point_lists_to_shapes(fill_edges)
     for fill_id, point_lists in shapes.items():
         path = ET.Element("path", fill_styles[fill_id])
-        # Animate ends each SVG path with the "closepath" (Z) command, but we
-        # shouldn't need it since shapes are always closed.
         path.set("d", " ".join(point_list_to_path_format(pl) for pl in point_lists))
         filled_paths.append(path)
 
