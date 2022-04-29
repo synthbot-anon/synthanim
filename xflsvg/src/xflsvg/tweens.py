@@ -1,11 +1,13 @@
+from logging import warning
 import numpy
 import math
 import xml.etree.ElementTree as etree
 from collections.abc import Iterable
 from bs4 import BeautifulSoup
+import warnings
 
 from .util import ColorObject
-from .domshape.edge import EDGE_TOKENIZER
+from .domshape.edge import EDGE_TOKENIZER, edge_format_to_point_lists
 
 def deserialize_matrix(matrix):
     if matrix == None:
@@ -83,12 +85,13 @@ def adobe_matrix(rotation, shear, scale_x, scale_y):
     
     return rotation_matrix @ skew_matrix @ scale_matrix
 
+_COLOR_IDENTITIY = ColorObject(1, 1, 1, 1, 0, 0, 0, 0)
 
 def color_interpolation(start, end, n_frames, ease):
     if start == None:
-        start = ColorObject()
+        start = _COLOR_IDENTITIY
     if end == None:
-        end = ColorObject()
+        end = _COLOR_IDENTITIY
 
     for i in range(n_frames):
         frac = ease['color'](i / (n_frames - 1)).y
@@ -119,39 +122,60 @@ def interpolate_value(x, y, idx, duration, ease):
     return result
 
 def interpolate_color(x, y, i, duration, ease):
-    rx, gx, bx = split_colors(x)
-    ry, gy, by = split_colors(y)
+    colx, ax = x
+    coly, ay = y
+
+    rx, gx, bx = split_colors(colx)
+    ry, gy, by = split_colors(coly)
     ri = round(interpolate_value(rx, ry, i, duration, ease['color']))
     gi = round(interpolate_value(gx, gy, i, duration, ease['color']))
     bi = round(interpolate_value(bx, by, i, duration, ease['color']))
-    return '#%02X%02X%02X' % (ri, gi, bi)
+    ai = round(interpolate_value(ax, ay, i, duration, ease['color']))
+    return ('#%02X%02X%02X' % (ri, gi, bi), ai)
 
-def _get_color_map(xmlnode, name):
+def get_color_map(xmlnode, name):
     result = {}
     for child in xmlnode.findChildren(name, recursive=False):
         index = int(child.get('index'))
-        color = child.SolidColor.get('color')
+        if child.SolidColor == None:
+            warnings.warn(f'missing SolidColor for a tween in {xmlnode}')
+            color = ("#000000", 0)
+        else:
+            color = (
+                child.SolidColor.get('color', "#000000"),
+                float(child.SolidColor.get('alpha', 1))
+            )
         result[index] = color
     return result
 
 def interpolate_color_map(name, start, end, i, duration, ease):
-    start_map = _get_color_map(start, name)
-    end_map = _get_color_map(end, name)
+    if not start:
+        return None, set()
+        
+    start_map = get_color_map(start, name)
+    end_map = get_color_map(end, name)
 
     if not start_map:
-        return start
+        return start, start_map.keys()
 
     interp_map = {}
     for key, scol in start_map.items():
+        if key not in end_map:
+            continue
         ecol = end_map[key]
         interp_map[key] = interpolate_color(scol, ecol, i, duration, ease)
     
     result = BeautifulSoup(str(start), 'xml')
     for child in list(result.findChildren(name, recursive=False)):
         key = int(child.get('index'))
-        child.SolidColor.set('color', interp_map[key])
+        if key not in interp_map:
+            continue
+        color, alpha = interp_map[key]
+        child.SolidColor.set('color', color)
+        if alpha != 1:
+            child.SolidColor.set('alpha', alpha)
 
-    return result
+    return result, set(interp_map.keys())
 
 def _segment_index(index):
     if index == None:
@@ -175,6 +199,9 @@ def _parse_number(num: str) -> float:
         # Account for hex un-scaling
         return float(num) * 256
 
+# def _point_index(x):
+    # return int(x / 20)
+
 def _get_start_point(shape):
     edges = shape.xmlnode.Edge.get('edges')
     tokens = iter(EDGE_TOKENIZER.findall(edges))
@@ -182,63 +209,104 @@ def _get_start_point(shape):
     moveTo = next(tokens)
     x = _parse_number(next(tokens))
     y = _parse_number(next(tokens))
-    return x, y
+    return (x, y)
 
+def _get_edges_by_startpoint(shape):
+    result = {}
+
+    for edge in shape.edges.findChildren('Edge', recursive=False):
+        edge_str = str(edge)
+        edge_list = edge.get('edges')
+        if not edge_list:
+            continue
+        point_lists = edge_format_to_point_lists(edge_list)
+        for pl in point_lists:
+            for pt in pl:
+                if type(pt) in (list, tuple):
+                    continue
+                x, y = [20*float(x) for x in pt.split(' ')]
+                result[(math.floor(x), math.floor(y))] = edge_str
+                result[(math.ceil(x), math.floor(y))] = edge_str
+                result[(math.floor(x), math.ceil(y))] = edge_str
+                result[(math.ceil(x), math.ceil(y))] = edge_str
+
+    return result
+    
 
 def _parse_coord(coord):
+    if not coord:
+        return 0, 0
     x, y = coord.split(', ')
     return _parse_number(x), _parse_number(y)
 
-def shape_interpolation(segment_xmlnode, start, end, n_frames, ease):
+def shape_interpolation(segment_xmlnodes, start, end, n_frames, ease):
     yield start.xmlnode
 
     for i in range(1, n_frames-1):
-        fills = interpolate_color_map(
+        fills, fill_keys = interpolate_color_map(
             'FillStyle', start.xmlnode.fills, end.xmlnode.fills, i, n_frames, ease)
-        strokes = interpolate_color_map(
+        fills = fills and fills.fills or ""
+
+        strokes, stroke_keys = interpolate_color_map(
             'StrokeStyle', start.xmlnode.strokes, end.xmlnode.strokes, i, n_frames, ease)
-        
-        fillStyle1 = _segment_index(segment_xmlnode.get('fillIndex1', None))
-        strokeStyle = _segment_index(segment_xmlnode.get('strokeIndex1', None))
-        points = []
-        
-        startA = segment_xmlnode.get('startPointA', None)
-        startB = segment_xmlnode.get('startPointB', None)
-        if startA:
-            startA = _parse_coord(startA)
-        else:
-            startA = _get_start_point(start)
-        if startB:
-            startB = _parse_coord(startB)
-        else:
-            startB = startB or _get_start_point(end)
+        strokes = strokes and strokes.strokes or ""
 
-        prev_point = interpolate_points(startA, startB, i, n_frames, ease)
-        points.append(f'!{_xfl_point(prev_point)}')
-        
-        for curve in segment_xmlnode.findChildren('MorphCurves', recursive=False):
-            anchA = _parse_coord(curve.get('anchorPointA'))
-            anchB = _parse_coord(curve.get('anchorPointB'))
-            
-            if curve.get('isLine', None):
-                lineTo = interpolate_points(anchA, anchB, i, n_frames, ease)
-                points.append(f'|{_xfl_point(lineTo)}')
+        edges_by_startpoint = _get_edges_by_startpoint(start.xmlnode)
+
+        edges = []
+        for segment_xmlnode in segment_xmlnodes:
+            fillStyle1 = _segment_index(segment_xmlnode.get('fillIndex1', None))
+            # this one should always be None?
+            fillStyle0 = None #_segment_index(segment_xmlnode.get('fillIndex2', None))
+            strokeStyle = _segment_index(segment_xmlnode.get('strokeIndex1', None))
+            if strokeStyle not in stroke_keys:
+                strokeStyle = None
+
+            points = []
+            startA = segment_xmlnode.get('startPointA', None)
+            startB = segment_xmlnode.get('startPointB', None)
+            if startA:
+                startA = _parse_coord(startA)
             else:
-                ctrlA = _parse_coord(curve.get('controlPointA'))
-                ctrlB = _parse_coord(curve.get('controlPointB'))
-                ctrl = interpolate_points(ctrlA, ctrlB, i, n_frames, ease)
-                quadTo = interpolate_points(anchA, anchB, i, n_frames, ease)
-                points.append(f'[{_xfl_point(ctrl)} {_xfl_point(quadTo)}')
-        
-        points.append(f'')
-        points = ''.join(points)
+                startA = _get_start_point(start)
+            if startB:
+                startB = _parse_coord(startB)
+            else:
+                startB = startB or _get_start_point(end)
+            
 
-        yield f"""<DOMShape>
-                {fills.fills}
-                {strokes.strokes}
-                <edges>
-                    <Edge fillStyle1="{fillStyle1}" strokeStyle="{strokeStyle}" edges="{points}"/>
-                </edges>
-            </DOMShape>"""
+            prev_point = interpolate_points(startA, startB, i, n_frames, ease)
+            points.append(f'!{_xfl_point(prev_point)}')
+            
+            for curve in segment_xmlnode.findChildren('MorphCurves', recursive=False):
+                anchA = _parse_coord(curve.get('anchorPointA'))
+                anchB = _parse_coord(curve.get('anchorPointB'))
+                
+                if curve.get('isLine', None):
+                    lineTo = interpolate_points(anchA, anchB, i, n_frames, ease)
+                    points.append(f'|{_xfl_point(lineTo)}')
+                else:
+                    ctrlA = _parse_coord(curve.get('controlPointA'))
+                    ctrlB = _parse_coord(curve.get('controlPointB'))
+                    ctrl = interpolate_points(ctrlA, ctrlB, i, n_frames, ease)
+                    quadTo = interpolate_points(anchA, anchB, i, n_frames, ease)
+                    points.append(f'[{_xfl_point(ctrl)} {_xfl_point(quadTo)}')
+            
+            points = ''.join(points)
+
+            # edge_str = edges_by_startpoint[(_point_index(startA[0]), _point_index(startA[1]))]
+            edge_str = edges_by_startpoint[startA]
+            clone = BeautifulSoup(edge_str, 'xml').Edge
+            clone['edges'] = points
+            edges.append(str(clone))
+
+            
+            # fillStyle0 = fillStyle0 and f'fillStyle0="{fillStyle0}" ' or ""
+            # fillStyle1 = fillStyle1 and f'fillStyle1="{fillStyle1}" ' or ""
+            # strokeStyle = strokeStyle and f'strokeStyle="{strokeStyle}" ' or ""
+            # edges.append(f"""<Edge {fillStyle0}{fillStyle1}{strokeStyle}edges="{points}"/>""")
+        
+        edges = "".join(edges)
+        yield f"""<DOMShape>{fills}{strokes}<edges>{edges}</edges></DOMShape>"""
     
     yield end.xmlnode

@@ -69,6 +69,7 @@ from bs4 import BeautifulSoup
 from .util import ColorObject
 from .tweens import matrix_interpolation, color_interpolation, shape_interpolation
 from . import easing
+import warnings
 
 _frame_index = 0
 
@@ -86,10 +87,8 @@ class Frame:
 
         self.matrix = matrix
         self.color = color
-        self.owner_element = None
-        self.parent_frame = None
-        self.frame_index = -1
         self.children = children or []
+        self.data = {}
 
     def add_child(self, child_frame):
         self.children.append(child_frame)
@@ -190,7 +189,10 @@ def _get_matrix(xmlnode):
 
 
 def _get_color(xmlnode):
-    outer = xmlnode.findChild("color", recursive=False)
+    if xmlnode.findChild('frameFilters', recursive=False):
+        warnings.warn('Cannot handle frameFilters')
+
+    outer = xmlnode.findChild("color", recursive=False) or xmlnode.findChild('frameColor', recursive=False)
     if outer == None:
         return None
 
@@ -273,41 +275,49 @@ class Element(AnimationObject):
 
     def __getitem__(self, k: int) -> Frame:
         result = Frame()
-        result.owner_element = self
-        result.frame_index = k
         return result
 
 
 class DOMSymbolInstance(Element):
-    def __init__(self, xflsvg, duration, xmlnode):
+    def __init__(self, xflsvg, asset, layer, duration, xmlnode):
         super().__init__(xmlnode)
         self.xflsvg = xflsvg
+        self.asset = asset
+        self.layer = layer
         self.loop_type = xmlnode.get("loop")
-        self.asset = xflsvg.get_safe_asset(xmlnode.get("libraryItemName"))
-        self.first_frame = (
-            int(xmlnode.get("firstFrame", default=0)) % self.asset.frame_count
-        )
-        self.last_frame = (
-            int(xmlnode.get("lastFrame", default=-1)) % self.asset.frame_count
-        )
-        self.duration = duration
+        self.target_asset = xflsvg.get_safe_asset(xmlnode.get("libraryItemName"))
+
+        if self.target_asset:
+            self.first_frame = (
+                int(xmlnode.get("firstFrame", default=0)) % self.target_asset.frame_count
+            )
+            self.last_frame = (
+                int(xmlnode.get("lastFrame", default=-1)) % self.target_asset.frame_count
+            )
+            self.duration = duration
+        else:
+            warnings.warn(f'missing asset: {xmlnode.get("libraryItemName")}')
+            self.first_frame = 0
+            self.last_frame = 0
+            self.duration = 1
 
     def __getitem__(self, iteration: int) -> Frame:
+        if not self.target_asset:
+            return Frame()
+
         if self.loop_type in ("single frame", None):
             frame_index = self.first_frame
         elif self.loop_type == "play once":
             frame_index = min(self.first_frame + iteration, self.last_frame)
         elif self.loop_type == "loop":
             loop_size = (
-                self.asset.frame_count
+                self.target_asset.frame_count
             )  # should this take last_frame into account?
             frame_index = (self.first_frame + iteration) % loop_size
         else:
             raise Exception(f"Unknown loop type: {self.loop_type}")
 
-        result = _transformed_frame(self.asset[frame_index], self.matrix, self.color)
-        result.owner_element = self
-        result.frame_index = frame_index
+        result = _transformed_frame(self.target_asset[frame_index], self.matrix, self.color)
         return result
 
     def __len__(self) -> int:
@@ -333,14 +343,9 @@ class DOMShape(Element):
             start_frame_index,
             self.path,
         )
-
-        self.svg_frame.owner = self
-        self.svg_frame.frame_index = 0
     
     def __getitem__(self, iteration: int) -> Frame:
         result = _transformed_frame(self.svg_frame, self.matrix, self.color)
-        result.frame_index = 0
-        result.owner_element = self
         return result
 
     def __len__(self) -> int:
@@ -385,7 +390,7 @@ class DOMGroup(Element, FrameContext):
                     element_xmlnode,
                 )
             elif element_type == "DOMSymbolInstance":
-                element = DOMSymbolInstance(self.xflsvg, self.duration, element_xmlnode)
+                element = DOMSymbolInstance(self.xflsvg, self.asset, self.layer, self.duration, element_xmlnode)
             elif element_type == "DOMGroup":
                 element = DOMGroup(
                     self.xflsvg,
@@ -404,13 +409,9 @@ class DOMGroup(Element, FrameContext):
 
     def __getitem__(self, iteration: int) -> Frame:
         result = Frame(color=self.color)
-        result.owner_element = self
-        result.frame_index = iteration
         for child in self.elements:
             result.add_child(child[iteration])
 
-        result.owner_element = self
-        result.frame_index = iteration
         return result
 
     def __len__(self) -> int:
@@ -440,6 +441,9 @@ def _get_eases(xmlnode):
         target = ease.get('target')
         if target != 'all':
             result[target] = curve
+            if target == 'filters':
+                warnings.warn('Filter ease not supported')
+
             continue
         
         result.setdefault('position', curve)
@@ -463,6 +467,8 @@ def _get_eases(xmlnode):
         target = ease.get('target')
         if target != 'all':
             result.setdefault(target, curve)
+            if target == 'filters':
+                warnings.warn('Filter ease not supported')
             continue
         
         result.setdefault('position', curve)
@@ -542,7 +548,7 @@ class DOMFrame(AnimationObject, FrameContext):
                     element_xmlnode,
                 )
             elif element_type == "DOMSymbolInstance":
-                element = DOMSymbolInstance(self.xflsvg, self.duration, element_xmlnode)
+                element = DOMSymbolInstance(self.xflsvg, self.asset, layer, self.duration, element_xmlnode)
             elif element_type == "DOMGroup":
                 element = DOMGroup(
                     self.xflsvg,
@@ -564,25 +570,33 @@ class DOMFrame(AnimationObject, FrameContext):
             return
         if not nextFrame.elements:
             return
-        if self.duration <= 2:
+        if self.duration == 1:
             return
 
         self.eases = _get_eases(self.xmlnode)
 
         if self.tween_type == 'motion':
-            start_element = list(filter(lambda x: isinstance(x, Element), self.elements))
-            end_element = list(filter(lambda x: isinstance(x, Element), nextFrame.elements))
+            start_element = list(filter(lambda x: isinstance(x, DOMSymbolInstance), self.elements))
+            end_element = list(filter(lambda x: isinstance(x, DOMSymbolInstance), nextFrame.elements))
+
+            if not start_element or not end_element:
+                return
+            
             assert len(start_element) == 1, self.xmlnode
             assert len(end_element) == 1, nextFrame.xmlnode
             start_element = start_element[0]
             end_element = end_element[0]
 
             matrices = list(matrix_interpolation(start_element.matrix, end_element.matrix, self.duration+1, self.eases))
-            # colors = list(color_interpolation(start_element.color, end_element.color, self.duration+1, self.eases))
-            colors = [start_element.color] * len(matrices)
+            colors = list(color_interpolation(start_element.color, end_element.color, self.duration+1, self.eases))
             self.tween = motion_tween(start_element, matrices, colors)
             return
         elif self.tween_type == 'shape':
+            segment_xmlnodes = self.xmlnode.findChildren('MorphSegment')
+            if not segment_xmlnodes:
+                return
+            segment_xmlnodes = segment_xmlnodes
+
             start_element = list(filter(lambda x: isinstance(x, DOMShape), self.elements))
             end_element = list(filter(lambda x: isinstance(x, DOMShape), nextFrame.elements))
             assert len(start_element) == 1, self.xmlnode
@@ -590,17 +604,19 @@ class DOMFrame(AnimationObject, FrameContext):
             start_element = start_element[0]
             end_element = end_element[0]
 
-            segment_xmlnode = self.xmlnode.findChildren('MorphSegment')[-1]
-            shape_data = list(shape_interpolation(segment_xmlnode, start_element, end_element, self.duration+1, self.eases))
+            shape_data = list(shape_interpolation(segment_xmlnodes, start_element, end_element, self.duration+1, self.eases))
             shapes = []
             for i, data in enumerate(shape_data):
-                shapes.append(self.xflsvg.get_shape(
+                shape_frame = self.xflsvg.get_shape(
                     data,
                     self.asset.id,
                     self.layer.index,
                     self.start_frame_index + i,
                     (0,),
-                ))
+                )
+                shape_frame.owner_element = self
+                shape_frame.frame_index = i + self.start_frame_index
+                shapes.append(shape_frame)
             self.tween = shape_tween(start_element, shapes)
             return
 
@@ -611,18 +627,16 @@ class DOMFrame(AnimationObject, FrameContext):
             return self._frames[frame_index]
 
         new_frame = Frame()
+        iteration = frame_index - self.start_frame_index
 
         if not self.has_index(frame_index):
             return new_frame
-
-        iteration = frame_index - self.start_frame_index
+        
         with self.tween(iteration):
             for element in self.elements:
                 new_frame.add_child(element[iteration])
 
         self._frames[frame_index] = new_frame
-        new_frame.owner_element = self
-        new_frame.frame_index = frame_index
         return new_frame
 
     def __len__(self) -> int:
@@ -694,13 +708,14 @@ class Layer(AnimationObject):
             return self._frames[frame_index]
 
         new_frame = Frame()
-        for bundle in self.domframes:
-            if bundle.has_index(frame_index):
-                new_frame.add_child(bundle[frame_index])
+        new_frame.data['layer'] = self.name or ''
+        new_frame.data['frame'] = frame_index
+
+        for domframe in self.domframes:
+            if domframe.has_index(frame_index):
+                new_frame.add_child(domframe[frame_index])
 
         self._frames[frame_index] = new_frame
-        new_frame.owner_element = self
-        new_frame.frame_index = frame_index
 
         return new_frame
 
@@ -714,7 +729,7 @@ class Layer(AnimationObject):
 
 
 class Asset(AnimationObject):
-    def __init__(self, xflsvg, id: str, xmlnode, timeline=None):
+    def __init__(self, xflsvg, id: str, xmlnode, timeline=None, width=None, height=None):
         super().__init__()
         print('loading', id)
         self.xflsvg = xflsvg
@@ -722,6 +737,8 @@ class Asset(AnimationObject):
         self.layers = []
         self._frames = {}
         self.frame_count = 0
+        self.width = width
+        self.height = height
 
         timeline = timeline or xmlnode.timeline
 
@@ -737,10 +754,20 @@ class Asset(AnimationObject):
             return self._frames[frame_index]
 
         new_frame = Frame()
+        new_frame.data['timeline'] = self.id
+        new_frame.data['frame'] = frame_index
+        if self.width:
+            new_frame.data['width'] = self.width
+        if self.height:
+            new_frame.data['height'] = self.height
+
         masked_frames = {}
         for layer in self.layers:
             if layer.layer_type == "mask":
                 layer_frame = MaskedFrame(layer[frame_index])
+                layer_frame.owner_element = self
+                layer_frame.frame_index = frame_index
+                
                 masked_frames[layer.index] = layer_frame
                 new_frame.prepend_child(layer_frame)
 
@@ -752,8 +779,7 @@ class Asset(AnimationObject):
                     new_frame.prepend_child(layer_frame)
 
         self._frames[frame_index] = new_frame
-        new_frame.owner_element = self
-        new_frame.frame_index = frame_index
+        
         return new_frame
 
     def __len__(self) -> int:
@@ -767,6 +793,9 @@ class Asset(AnimationObject):
 
 class Document(Asset):
     def __init__(self, xflsvg, xmlnode, timeline=0):
+        self.width = float(xmlnode.DOMDocument.get('width', 550))
+        self.height = float(xmlnode.DOMDocument.get('height', 400))
+
         available_timelines = xmlnode.timelines.findChildren(
             "DOMTimeline", recursive=False
         )
@@ -785,6 +814,8 @@ class Document(Asset):
             f"file:///{xflsvg.id}.xfl/{timeline_name}",
             xmlnode,
             timeline=dom_timeline,
+            width=self.width,
+            height=self.height
         )
 
 
@@ -799,8 +830,6 @@ class XflReader:
         with open(document_path) as document_file:
             self.xmlnode = BeautifulSoup(document_file, "xml")
 
-        self.width = int(self.xmlnode.DOMDocument["width"])
-        self.height = int(self.xmlnode.DOMDocument["height"])
         self.background = self.xmlnode.DOMDocument.get("backgroundColor", "#FFFFFF")
 
     def get_timeline(self, timeline=0):
@@ -819,6 +848,9 @@ class XflReader:
             asset_path = default_asset_path
         else:
             asset_path = default_asset_path.replace("&", "_")
+        
+        if not os.path.exists(asset_path):
+            return None
 
         with open(asset_path) as asset_file:
             asset_soup = BeautifulSoup(asset_file, "xml")

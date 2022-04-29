@@ -1,7 +1,9 @@
 import xml.etree.ElementTree as ET
+from bs4 import BeautifulSoup
 
 from .xflsvg import XflReader, XflRenderer
 from .domshape.shape import xfl_domshape_to_svg
+from .tweens import get_color_map
 
 _EMPTY_SVG = '<svg height="1px" width="1px" viewBox="0 0 1 1" />'
 _IDENTITY_MATRIX = [1, 0, 0, 1, 0, 0]
@@ -45,6 +47,71 @@ def color_to_svg_filter(color):
     return filter
 
 
+def _with_border(domshape):
+    soup = BeautifulSoup(domshape, 'xml').DOMShape
+
+    if soup.fills:
+        fills = get_color_map(soup.fills, 'FillStyle')
+    else:
+        fills = {}
+    
+    if soup.strokes:
+        strokes = get_color_map(soup.strokes, 'StrokeStyle')
+    else:
+        strokes = {}
+        new_strokes = BeautifulSoup("""
+            <strokes />
+        """, 'xml')
+        soup.append(new_strokes)
+
+    reverse_strokes_map = dict([(x[1], x[0]) for x in strokes.items()])
+    
+    modified = False
+    for edge in soup.edges.findChildren('Edge', recursive=False):
+        if edge.get('strokeStyle'):
+            continue
+
+        fillStyle0 = edge.get('fillStyle0')
+        fillStyle1 = edge.get('fillStyle1')
+        if not fillStyle0 and not fillStyle1:
+            continue
+        
+        useFillStyle = int(fillStyle0 or fillStyle1)
+        color = fills[useFillStyle]
+        stroke_index = reverse_strokes_map.get(color, None)
+        if not stroke_index:
+            stroke_index = len(strokes) + 1
+            
+            color_attr = f'color="{color[0]}"'
+            alpha_attr = ""
+            if color[1] != 1:
+                alpha_attr = f'alpha="{color[1]}"'
+
+            new_stroke = BeautifulSoup(f"""
+                    <StrokeStyle index="{stroke_index}">
+                        <SolidStroke scaleMode="normal" caps="none" vectorEffect="non-scaling-stroke" weight="0.1">
+                            <fill>
+                                <SolidColor {color_attr} {alpha_attr} />
+                            </fill>
+                        </SolidStroke>
+                    </StrokeStyle>
+
+                """, 'xml')
+            
+            soup.strokes.append(new_stroke.StrokeStyle)
+            strokes[stroke_index] = color
+            reverse_strokes_map[color] = stroke_index
+            
+        edge['strokeStyle'] = str(stroke_index)
+        modified = True
+    
+    if not modified:
+        return domshape
+    
+    return str(soup)
+
+
+
 class SvgRenderer(XflRenderer):
     HREF = ET.QName("http://www.w3.org/1999/xlink", "href")
 
@@ -63,11 +130,13 @@ class SvgRenderer(XflRenderer):
         if self.mask_depth == 0:
             svg = self.shape_cache.get(shape_snapshot.identifier, None)
             if not svg:
+                # domshape = _with_border(shape_snapshot.domshape)
                 svg = xfl_domshape_to_svg(shape_snapshot.domshape, False)
                 self.shape_cache[shape_snapshot.identifier] = svg
         else:
             svg = self.mask_cache.get(shape_snapshot.identifier, None)
             if not svg:
+                # domshape = _with_border(shape_snapshot.domshape)
                 svg = xfl_domshape_to_svg(shape_snapshot.domshape, True)
                 self.mask_cache[shape_snapshot.identifier] = svg
         
@@ -144,7 +213,7 @@ class SvgRenderer(XflRenderer):
         masked_items = self.context[-1][-1]
         masked_items.extend(children)
 
-    def compile(self, width, height, x=0, y=0):
+    def compile(self, width, height, x=0, y=0, scale=1):
         svg = ET.Element(
             "svg",
             {
@@ -158,7 +227,7 @@ class SvgRenderer(XflRenderer):
                 "y": f"{y}px",
                 "width": f"{width}px",
                 "height": f"{height}px",
-                "viewBox": f"{x} {y} {width} {height}",
+                "viewBox": f"{x/scale} {y/scale} {width/scale} {height/scale}",
             },
         )
 

@@ -29,10 +29,10 @@ class ColorObject:
             self.mg * scalar,
             self.mb * scalar,
             self.ma * scalar,
-            self.mr * scalar,
-            self.mg * scalar,
-            self.mb * scalar,
-            self.ma * scalar,
+            self.dr * scalar,
+            self.dg * scalar,
+            self.db * scalar,
+            self.da * scalar,
         )
     
     def __add__(self, other):
@@ -41,10 +41,10 @@ class ColorObject:
             self.mg + other.mg,
             self.mb + other.mb,
             self.ma + other.ma,
-            self.mr + other.mr,
-            self.mg + other.mg,
-            self.mb + other.mb,
-            self.ma + other.ma,
+            self.dr + other.dr,
+            self.dg + other.dg,
+            self.db + other.db,
+            self.da + other.da,
         )
 
     def is_identity(self):

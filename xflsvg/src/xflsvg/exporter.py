@@ -22,10 +22,15 @@ class TableExporter(XflRenderer):
         self.context = [[]]
         self.frames = {}
         self._captured_frames = []
-
+        self.labels = {}
+    
+    def on_frame_rendered(self, frame, *args, **kwargs):
+        if frame.data:
+            self.labels.setdefault(frame.identifier, {}).update(frame.data)
 
     def render_shape(self, shape_snapshot, *args, **kwargs):
         self.shapes[shape_snapshot.identifier] = shape_snapshot.domshape
+        self.labels
         self.context[-1].append(shape_snapshot.identifier)
 
 
@@ -94,22 +99,22 @@ class TableExporter(XflRenderer):
         
     
     def compile_frames(self):
-        return self.shapes, self.frames, self._captured_frames
+        return self.shapes, self.frames, self.labels, self._captured_frames
         
 def get_table_frame(shapes, frames, render_index):
-    if render_index in shapes:
-        domshape = shapes[render_index]
+    if str(render_index) in shapes:
+        domshape = shapes[str(render_index)]
         shape = ShapeFrame(domshape)
         shape.identifier = render_index
         return shape
     else:
-        frame_data = frames[render_index]
+        frame_data = frames[str(render_index)]
         children = [get_table_frame(shapes, frames, x) for x in frame_data['children']]
 
         if 'mask' in frame_data:
             mask = get_table_frame(shapes, frames, frame_data['mask'])
             frame = MaskedFrame(mask, children)
-            frame.identifier = render_index
+            frame.identifier = int(render_index)
             return frame
 
         transform = frame_data.get('transform', None)
@@ -117,7 +122,7 @@ def get_table_frame(shapes, frames, render_index):
         if filter:
             filter = ColorObject(*filter['multiply'], *filter['shift'])
         frame = Frame(transform, filter, children)
-        frame.identifier = render_index
+        frame.identifier = int(render_index)
         return frame
 
 
