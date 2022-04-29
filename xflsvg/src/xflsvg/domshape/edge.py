@@ -208,6 +208,7 @@ def point_list_to_path_format(point_list: list) -> str:
     """Convert a point list into the SVG path format."""
     point_iter = iter(point_list)
     path = ["M", next(point_iter)]
+    first_point = path[1]
     last_command = "M"
 
     try:
@@ -221,10 +222,13 @@ def point_list_to_path_format(point_list: list) -> str:
             if command == "Q":
                 # Append control point and destination point
                 path.append(point[0])
-                path.append(next(point_iter))
+                point = next(point_iter)
+                path.append(point)
             else:
                 path.append(point)
     except StopIteration:
+        if point == first_point:
+            path.append("Z")
         return " ".join(path)
 
 
@@ -389,9 +393,9 @@ def xfl_edge_to_svg_path(
     shapes = point_lists_to_shapes(fill_edges)
     for fill_id, point_lists in shapes.items():
         path = ET.Element("path", fill_styles[fill_id])
-        shape_path = [point_list_to_path_format(pl) for pl in point_lists]
-        shape_path.append("Z")
-        path.set("d", " ".join(shape_path))
+        # Animate ends each SVG path with the "closepath" (Z) command, but we
+        # shouldn't need it since shapes are always closed.
+        path.set("d", " ".join(point_list_to_path_format(pl) for pl in point_lists))
         filled_paths.append(path)
 
     stroked_paths = []
