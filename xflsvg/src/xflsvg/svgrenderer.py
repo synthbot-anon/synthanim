@@ -244,8 +244,6 @@ class SvgRenderer(XflRenderer):
             self.width = max(self.width, frame.box[2] - frame.box[0])
             self.height = max(self.height, frame.box[3] - frame.box[1])
         
-        print(len(self._captured_frames), self.x, self.y, self.width, self.height)
-    
     def set_camera(self, x, y, width, height):
         self.force_x = x
         self.force_y = y

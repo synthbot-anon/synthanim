@@ -905,7 +905,10 @@ class XflReader:
         height = float(self.xmlnode.DOMDocument.get('height', 400))
         self.box = [0, 0, width, height]
 
-    def get_timeline(self, timeline=0):
+    def get_timeline(self, timeline=None):
+        if timeline == None:
+            timeline = 0
+            
         if isinstance(timeline, int):
             return Document(self, self.xmlnode, timeline)
         

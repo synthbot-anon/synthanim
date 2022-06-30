@@ -2,8 +2,8 @@ from setuptools import setup
 
 setup(
     name='xflsvg',
-    version='0.1.2',
-    description='''A tool for working with XFL/XflSvg data.''',
+    version='1.0.0',
+    description='''A tool for working with XFL and render traces.''',
     long_description_content_type="text/x-rst",
     long_description='''
 This library is part of the Pony Preservation Project. It is designed to
@@ -22,39 +22,13 @@ time as we identify exactly what XFL data is necessary to recreate
 animations, as will the rendering code.
 
 ''',
-    url='https://github.com/synthbot-anon/synthanim',
-    author='Synthbot',
+    url='https://github.com/synthbot-anon/xflsvg',
+    author='Synthbot Anon',
     author_email='synthbot.anon@gmail.com',
-    license='''The domshape/ package is covered by the license from PluieElectrique. It was taken from https://github.com/PluieElectrique/xfl2svg.
-Everything else is covered by the license from Synthbot.
-
-===
+    license='''
 MIT License
 
-Copyright (c) 2021 Synthbot, /mlp/ Pony Preservation Project
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-
-===
-MIT License
-
-Copyright (c) 2021 PluieElectrique
+Copyright (c) 2022 Synthbot, /mlp/ Pony Preservation Project
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -75,13 +49,18 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
 ''',
-    packages=['xflsvg', 'xflsvg.domshape'],
+    packages=['xflsvg'],
     package_dir={'': 'src'},
-    install_requires=['bs4', 'html5lib', 'lxml', 'pandas', 'fastparquet'],
+    install_requires=[
+            'bs4',
+            'lxml',
+            'xfl2svg @ git+https://github.com/synthbot-anon/PluieElectrique-xfl2svg.git',
+            'kdtree @ git+https://github.com/synthbot-anon/Vectorized-Python-KD-Tree.git'
+    ],
     include_package_data=True,
 
     classifiers=[
-        'Development Status :: 1 - Planning',
+        'Development Status :: 4 - Beta',
         'Intended Audience :: Science/Research',
         'Operating System :: POSIX :: Linux',
         'Operating System :: Microsoft :: Windows',

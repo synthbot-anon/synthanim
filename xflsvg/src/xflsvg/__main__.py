@@ -24,7 +24,7 @@ if __name__ == '__main__':
     parser.add_argument('input', type=str, help='Input file or folder. This can be an XFL file (/path/to/file.xfl) or a render trace (/path/to/trace/).')
     parser.add_argument('output', type=str, help='Output file or folder. This can be a render trace (/path/to/trace/) or an SVG (/path/to/file.svg).')
     parser.add_argument('--timeline', required=False, type=str, help='Timeline to use within a file. This is either the symbol name (e.g., "~Octavia*Character") or the scene id (e.g., "file://file.xfl/Scene 1").')
-    parser.add_argument('--padding', required=False, type=int, help='Padding width to use in the output. This only applies to SVG outputs. It is applied after any scaling.')
+    parser.add_argument('--padding', required=False, type=int, default=0, help='Padding width to use in the output. This only applies to SVG outputs. It is applied after any scaling.')
     parser.add_argument('--use-camera', action='store_true', help='Use the camera box relevant to the scene. This should only be used when rendering a scene, not when rendering a symbol. This only applies to SVG outputs. If not set, use whatever box fits the frame being rendered.')
 
     args = parser.parse_args()
