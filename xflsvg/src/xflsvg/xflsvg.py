@@ -70,6 +70,9 @@ from .util import ColorObject
 from .tweens import matrix_interpolation, color_interpolation, shape_interpolation
 from . import easing
 import warnings
+from xfl2svg.shape.edge import edge_format_to_point_lists
+from xfl2svg.shape.style import parse_stroke_style
+import xml.etree.ElementTree as ET
 
 _frame_index = 0
 
@@ -77,7 +80,51 @@ def consume_frame_identifier():
     global _frame_index
     result = _frame_index
     _frame_index += 1
-    return result
+    return result        
+    
+def _get_box(domshape):
+    domshape = ET.fromstring(domshape)
+    box = None
+
+    stroke_widths = {}
+    for style in domshape.iterfind(".//{*}StrokeStyle"):
+        stroke_style = style[0]
+        index = style.get('index')
+        width = float(stroke_style.get('weight') or 1)
+        stroke_widths[index] = width
+
+    for edge in domshape.find(".//{*}edges").iterfind(".//{*}Edge[@edges]"):
+        width = 0
+        stroke_index = edge.get('strokeStyle')
+        if stroke_index:
+            width = stroke_widths.get(stroke_index, 0)
+
+        edge_format = edge.get("edges")
+        for point_list in edge_format_to_point_lists(edge_format):
+            for point in point_list:
+                if type(point) == tuple:
+                    point = point[0]
+                x, y = [float(x) for x in point.split()]
+                box = _expand_box(box, [
+                    x - width,
+                    y - width,
+                    x + width,
+                    y + width
+                ])
+    
+    return box
+
+def _expand_box(orig, addition):
+    if addition == None:
+        return orig
+    if orig == None:
+        return addition[:]
+        
+    orig[0] = min(orig[0], addition[0])
+    orig[1] = min(orig[1], addition[1])
+    orig[2] = max(orig[2], addition[2])
+    orig[3] = max(orig[3], addition[3])
+    return orig
 
 class Frame:
     def __init__(self, matrix=None, color=None, children=None):
@@ -89,14 +136,36 @@ class Frame:
         self.color = color
         self.children = children or []
         self.data = {}
+        self._box = None
+
+        for child in self.children:
+            self._box = _expand_box(self._box, child.box)
+            
 
     def add_child(self, child_frame):
         self.children.append(child_frame)
         child_frame.parent_frame = self
+        self._box = _expand_box(self._box, child_frame.box)
+
+
+    @property
+    def box(self):
+        if not self.matrix:
+            return self._box
+        if self._box == None:
+            return None
+        
+        x1 = self.matrix[0] * self._box[0] + self.matrix[1] * self._box[1] + self.matrix[4]
+        x2 = self.matrix[0] * self._box[2] + self.matrix[1] * self._box[3] + self.matrix[4]
+        y1 = self.matrix[2] * self._box[0] + self.matrix[3] * self._box[1] + self.matrix[5]
+        y2 = self.matrix[2] * self._box[2] + self.matrix[3] * self._box[3] + self.matrix[5]
+        return [min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2)]
+
 
     def prepend_child(self, child_frame):
         self.children.insert(0, child_frame)
         child_frame.parent_frame = self
+        self._box = _expand_box(self._box, child_frame.box)
 
     def render(self, *args, **kwargs):
         renderer = XflRenderer.current()
@@ -113,6 +182,7 @@ class ShapeFrame(Frame):
     def __init__(self, domshape):
         super().__init__()
         self.domshape = domshape
+        self._box = _get_box(domshape)
 
     def render(self, *args, **kwargs):
         renderer = XflRenderer.current()
@@ -731,7 +801,6 @@ class Layer(AnimationObject):
 class Asset(AnimationObject):
     def __init__(self, xflsvg, id: str, xmlnode, timeline=None, width=None, height=None):
         super().__init__()
-        print('loading', id)
         self.xflsvg = xflsvg
         self.id = id
         self.layers = []
@@ -832,8 +901,25 @@ class XflReader:
 
         self.background = self.xmlnode.DOMDocument.get("backgroundColor", "#FFFFFF")
 
+        width = float(self.xmlnode.DOMDocument.get('width', 550))
+        height = float(self.xmlnode.DOMDocument.get('height', 400))
+        self.box = [0, 0, width, height]
+
     def get_timeline(self, timeline=0):
-        return Document(self, self.xmlnode, timeline)
+        if isinstance(timeline, int):
+            return Document(self, self.xmlnode, timeline)
+        
+        if timeline.startswith('file://'):
+            prefix = f'file://{self.id}/'
+            assert timeline.startswith(prefix)
+            scene_name = timeline[len(prefix):]
+            return Document(self, self.xmlnode, scene_name)
+        
+        return self.get_asset(timeline)
+    
+    def get_camera(self):
+        return self.box
+
 
     def get_safe_asset(self, safe_asset_id):
         asset_id = html.unescape(safe_asset_id)

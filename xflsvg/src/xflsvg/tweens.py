@@ -7,7 +7,11 @@ from bs4 import BeautifulSoup
 import warnings
 
 from .util import ColorObject
-from .domshape.edge import EDGE_TOKENIZER, edge_format_to_point_lists
+from xfl2svg.shape.edge import EDGE_TOKENIZER, edge_format_to_point_lists
+
+import sys
+sys.path.append('Python-KD-Tree')
+import kd_tree
 
 def deserialize_matrix(matrix):
     if matrix == None:
@@ -211,8 +215,23 @@ def _get_start_point(shape):
     y = _parse_number(next(tokens))
     return (x, y)
 
+class KDMap:
+    def __init__(self):
+        self.points = kd_tree.KDTree([], 2)
+        self.items = {}
+    
+    def add(self, point, value):
+        self.points.add_point(point)
+        self.items.setdefault(point, []).append(value)
+    
+    def get(self, point):
+        dist, pt = self.points.get_nearest(point, True)
+        return self.items[pt]
+        
+
+
 def _get_edges_by_startpoint(shape):
-    result = {}
+    result = KDMap()
 
     for edge in shape.edges.findChildren('Edge', recursive=False):
         edge_str = str(edge)
@@ -225,10 +244,7 @@ def _get_edges_by_startpoint(shape):
                 if type(pt) in (list, tuple):
                     continue
                 x, y = [20*float(x) for x in pt.split(' ')]
-                result[(math.floor(x), math.floor(y))] = edge_str
-                result[(math.ceil(x), math.floor(y))] = edge_str
-                result[(math.floor(x), math.ceil(y))] = edge_str
-                result[(math.ceil(x), math.ceil(y))] = edge_str
+                result.add((x, y), edge_str)
 
     return result
     
@@ -295,7 +311,7 @@ def shape_interpolation(segment_xmlnodes, start, end, n_frames, ease):
             points = ''.join(points)
 
             # edge_str = edges_by_startpoint[(_point_index(startA[0]), _point_index(startA[1]))]
-            edge_str = edges_by_startpoint[startA]
+            edge_str = edges_by_startpoint.get(startA)[0]
             clone = BeautifulSoup(edge_str, 'xml').Edge
             clone['edges'] = points
             edges.append(str(clone))

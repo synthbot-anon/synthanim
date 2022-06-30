@@ -1,9 +1,12 @@
 import xml.etree.ElementTree as ET
 from bs4 import BeautifulSoup
 
+
 from .xflsvg import XflReader, XflRenderer
-from .domshape.shape import xfl_domshape_to_svg
+from xfl2svg.shape.shape import xfl_domshape_to_svg
 from .tweens import get_color_map
+import os
+import math
 
 _EMPTY_SVG = '<svg height="1px" width="1px" viewBox="0 0 1 1" />'
 _IDENTITY_MATRIX = [1, 0, 0, 1, 0, 0]
@@ -111,7 +114,6 @@ def _with_border(domshape):
     return str(soup)
 
 
-
 class SvgRenderer(XflRenderer):
     HREF = ET.QName("http://www.w3.org/1999/xlink", "href")
 
@@ -126,18 +128,29 @@ class SvgRenderer(XflRenderer):
         self.shape_cache = {}
         self.mask_cache = {}
 
+        self._captured_frames = []
+        self.x = None
+        self.y = None
+        self.width = None
+        self.height = None
+
+        self.force_x = None
+        self.force_y = None
+        self.force_width = None
+        self.force_height = None
+
     def render_shape(self, shape_snapshot, *args, **kwargs):
         if self.mask_depth == 0:
             svg = self.shape_cache.get(shape_snapshot.identifier, None)
             if not svg:
-                # domshape = _with_border(shape_snapshot.domshape)
-                svg = xfl_domshape_to_svg(shape_snapshot.domshape, False)
+                domshape = ET.fromstring(shape_snapshot.domshape)
+                svg = xfl_domshape_to_svg(domshape, False)
                 self.shape_cache[shape_snapshot.identifier] = svg
         else:
             svg = self.mask_cache.get(shape_snapshot.identifier, None)
             if not svg:
-                # domshape = _with_border(shape_snapshot.domshape)
-                svg = xfl_domshape_to_svg(shape_snapshot.domshape, True)
+                domshape = ET.fromstring(shape_snapshot.domshape)
+                svg = xfl_domshape_to_svg(domshape, True)
                 self.mask_cache[shape_snapshot.identifier] = svg
         
         fill_g, stroke_g, extra_defs = svg
@@ -212,29 +225,73 @@ class SvgRenderer(XflRenderer):
         children = self.context.pop()
         masked_items = self.context[-1][-1]
         masked_items.extend(children)
+    
+    def save_frame(self, frame):
+        self._captured_frames.append([self.defs, self.context])
+        self.defs = {}
+        self.context = [
+            [],
+        ]
 
-    def compile(self, width, height, x=0, y=0, scale=1):
-        svg = ET.Element(
-            "svg",
-            {
-                # `xmlns:xlink` is automatically added if any element uses
-                # `xlink:href`. We don't explicitly use the SVG namespace,
-                # though, so we need to add it here.
-                "xmlns": "http://www.w3.org/2000/svg",
-                "version": "1.1",
-                "preserveAspectRatio": "none",
-                "x": f"{x}px",
-                "y": f"{y}px",
-                "width": f"{width}px",
-                "height": f"{height}px",
-                "viewBox": f"{x/scale} {y/scale} {width/scale} {height/scale}",
-            },
-        )
+        if self.x == None:
+            self.x = frame.box[0]
+            self.y = frame.box[1]
+            self.width = frame.box[2] - frame.box[0]
+            self.height = frame.box[3] - frame.box[1]
+        else:
+            self.x = min(self.x, frame.box[0])
+            self.y = min(self.y, frame.box[1])
+            self.width = max(self.width, frame.box[2] - frame.box[0])
+            self.height = max(self.height, frame.box[3] - frame.box[1])
+        
+        print(len(self._captured_frames), self.x, self.y, self.width, self.height)
+    
+    def set_camera(self, x, y, width, height):
+        self.force_x = x
+        self.force_y = y
+        self.force_width = width
+        self.force_height = height
+    
 
-        defs_element = ET.SubElement(svg, "defs")
-        defs_element.extend(self.defs.values())
-        svg.extend(self.context[0])
-        # for item in self.context[0]:
-        # svg.extend(item)
+    # def compile(self, width, height, x=0, y=0, scale=1):
+    def compile(self, output_filename=None, scale=1, padding=0):
+        result = []
+        x = _conditional(self.force_x, self.x) - padding
+        y = _conditional(self.force_y, self.y) - padding
+        width = _conditional(self.force_width, self.width) + 2*padding
+        height = _conditional(self.force_height, self.height) + 2*padding
 
-        return ET.ElementTree(svg)
+        for i, data in enumerate(self._captured_frames):
+            defs, context = data
+            svg = ET.Element(
+                "svg",
+                {
+                    "xmlns": "http://www.w3.org/2000/svg",
+                    "version": "1.1",
+                    "preserveAspectRatio": "none",
+                    "x": f"{x*scale}px",
+                    "y": f"{y*scale}px",
+                    "width": f"{width*scale}px",
+                    "height": f"{height*scale}px",
+                    "viewBox": f"{x} {y} {width} {height}",
+                },
+            )
+
+            defs_element = ET.SubElement(svg, "defs")
+            defs_element.extend(defs.values())
+            svg.extend(context[0])
+            image = ET.ElementTree(svg)
+
+            if output_filename:
+                name, ext = os.path.splitext(output_filename)
+                with open(f'{name}{"%04d" % i}{ext}', 'w') as outp:
+                    image.write(outp, encoding='unicode')
+            
+            result.append(image)
+
+        return result
+
+def _conditional(forced_value, calculated_value):
+    if forced_value != None:
+        return forced_value
+    return calculated_value
